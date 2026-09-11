@@ -1,0 +1,5 @@
+export function assignmentMessage(task,appUrl){
+ const link=appUrl+'/?task='+encodeURIComponent(task.id);
+ return {subject:`Focusdesk · Penugasan: ${task.title}`.replace(/[\r\n]/g,' ').slice(0,180),text:
+`Halo ${task.pic_name},\n\n${task.owner_name||task.owner_email} menugaskan pekerjaan berikut kepada Anda.\n\nTugas: ${task.title}\nProject: ${task.project||'-'}\nKategori: ${task.category}\nPrioritas: ${task.priority}\nStatus saat dikirim: ${task.status}\nDeadline: ${task.due_date||'Belum ditentukan'}\nJadwal: ${task.scheduled_date||'Belum ditentukan'} ${task.start_time?.slice(0,5)||'Fleksibel'} WIB\nEstimasi: ${task.duration} menit\n\nDetail pekerjaan:\n${task.notes||'-'}\n\nCatatan progres:\n${task.progress_note||'-'}\n\n${task.assignee_id?'Buka tugas dan perbarui status (login diperlukan): '+link:'Kontak ini menerima penugasan melalui email saja. Balas pemilik tugas untuk memberi kabar progres; akses aplikasi belum diberikan.'}\n\nPemilik tugas: ${task.owner_name||'-'} <${task.owner_email}>\nPIC: ${task.pic_name} <${task.pic_email}>\nVersi tugas: ${task.version}\nEmail ini adalah snapshot saat dikirim; perubahan selanjutnya tidak mengubah email lama.`};
+}

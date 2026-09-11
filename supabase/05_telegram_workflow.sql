@@ -1,0 +1,359 @@
+-- Focusdesk v1.3. Run after 04_recurring_tasks.sql. Additive, replay-safe.
+begin;
+create table if not exists public.fd_telegram_accounts (
+ user_id uuid primary key references public.fd_profiles(id) on delete cascade,
+ telegram_id bigint not null unique check(telegram_id>0),
+ chat_id bigint not null check(chat_id=telegram_id),
+ created_at timestamptz not null default now()
+);
+create table if not exists public.fd_telegram_groups (
+ id uuid primary key default gen_random_uuid(),
+ owner_id uuid not null references public.fd_profiles(id) on delete cascade,
+ chat_id bigint not null unique check(chat_id<0),
+ title text not null check(length(title)<=200),
+ active boolean not null default true, created_at timestamptz not null default now()
+);
+create table if not exists public.fd_telegram_codes (
+ hash text primary key check(length(hash)=64),
+ user_id uuid not null references public.fd_profiles(id) on delete cascade,
+ kind text not null check(kind in ('personal','group')),
+ expires_at timestamptz not null default now()+interval '10 minutes'
+);
+alter table public.fd_tasks add column if not exists requires_testing boolean not null default false;
+alter table public.fd_tasks add column if not exists acceptance_criteria text not null default '' check(length(acceptance_criteria)<=4000);
+alter table public.fd_tasks add column if not exists test_cycle integer not null default 0;
+alter table public.fd_tasks add column if not exists telegram_group_id uuid references public.fd_telegram_groups(id) on delete restrict;
+alter table public.fd_tasks drop constraint if exists fd_tasks_status_check;
+alter table public.fd_tasks add constraint fd_tasks_status_check check(status in ('Backlog','To do','In progress','Ready for Testing','Testing','Rework','Done'));
+create table if not exists public.fd_task_activity (
+ id uuid primary key default gen_random_uuid(), task_id uuid not null references public.fd_tasks(id) on delete cascade,
+ actor_id uuid references public.fd_profiles(id) on delete set null,
+ from_status text, to_status text not null, test_cycle integer not null,
+ note text not null default '', task_version integer not null, created_at timestamptz not null default now()
+);
+create index if not exists fd_activity_task on public.fd_task_activity(task_id,created_at);
+create table if not exists public.fd_telegram_outbox (
+ id uuid primary key default gen_random_uuid(), owner_id uuid not null references public.fd_profiles(id) on delete cascade,
+ target_user_id uuid references public.fd_profiles(id) on delete cascade,
+ target_group_id uuid references public.fd_telegram_groups(id) on delete cascade,
+ task_id uuid references public.fd_tasks(id) on delete cascade,
+ kind text not null check(kind in ('task','digest')),
+ day date, dedupe_key text not null unique,
+ status text not null default 'pending' check(status in ('pending','sending','sent','failed','uncertain','skipped')),
+ attempts integer not null default 0, next_attempt_at timestamptz not null default now(),
+ attempted_at timestamptz, sent_at timestamptz, last_error text, created_at timestamptz not null default now(),
+ check((target_user_id is null)<>(target_group_id is null))
+);
+create index if not exists fd_tg_queue on public.fd_telegram_outbox(status,next_attempt_at,created_at);
+create table if not exists public.fd_telegram_messages (
+ chat_id bigint not null, message_id bigint not null,
+ task_id uuid references public.fd_tasks(id) on delete cascade, task_version integer,
+ target_user_id uuid references public.fd_profiles(id) on delete cascade,
+ target_group_id uuid references public.fd_telegram_groups(id) on delete cascade,
+ created_at timestamptz not null default now(), primary key(chat_id,message_id)
+);
+create table if not exists public.fd_telegram_updates (
+ update_id bigint primary key, created_at timestamptz not null default now()
+);
+
+-- Extra guard runs BEFORE the existing PIC/owner guard. Derived cycle cannot be forged.
+create or replace function public.fd_workflow_guard() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare reviewer boolean:=auth.uid()=new.user_id;
+begin
+ if new.telegram_group_id is not null and not exists(select 1 from public.fd_telegram_groups where id=new.telegram_group_id and owner_id=new.user_id and active) then
+  if tg_op='INSERT' or new.telegram_group_id is distinct from old.telegram_group_id then raise exception 'Pilih grup Telegram aktif milik Anda';end if;
+ end if;
+ if tg_op='UPDATE' and (new.recurrence_id is distinct from old.recurrence_id or new.recurrence_date is distinct from old.recurrence_date or new.recurrence_pattern is distinct from old.recurrence_pattern or new.recurrence_interval is distinct from old.recurrence_interval) then raise exception 'Identitas occurrence tidak dapat diubah';end if;
+ if new.recurrence_id is not null and not exists(select 1 from public.fd_recurrences r where r.id=new.recurrence_id and r.owner_id=new.user_id) then raise exception 'Recurring series bukan milik Anda';end if;
+ if tg_op='INSERT' then
+  new.test_cycle:=0;
+  if new.requires_testing and new.status not in ('Backlog','To do','In progress') then raise exception 'Tugas testing baru harus dimulai sebelum tahap review';end if;
+ else
+  if new.test_cycle is distinct from old.test_cycle then raise exception 'Test cycle dikelola sistem';end if;
+  if old.requires_testing and not new.requires_testing then raise exception 'Testing tidak dapat dinonaktifkan pada tugas yang sudah memerlukannya';end if;
+  if not old.requires_testing and new.requires_testing and old.status not in ('Backlog','To do','In progress','Rework') then raise exception 'Aktifkan testing sebelum tugas selesai';end if;
+  if new.requires_testing then
+   if old.status in ('Ready for Testing','Testing') and (new.pic_id is distinct from old.pic_id or new.acceptance_criteria is distinct from old.acceptance_criteria) then raise exception 'Kembalikan untuk perbaikan sebelum mengganti PIC/kriteria';end if;
+   if new.status is distinct from old.status then
+    if not (
+      (old.status in ('Backlog','To do','Rework') and new.status='In progress') or
+      (old.status='In progress' and new.status='Ready for Testing') or
+      (reviewer and old.status='Ready for Testing' and new.status='Testing') or
+      (reviewer and old.status='Testing' and new.status in ('Done','Rework')) or
+      (reviewer and old.status='Ready for Testing' and new.status='Rework') or
+      (reviewer and old.status='Done' and new.status='Rework')
+    ) then raise exception 'Transisi testing tidak diizinkan. PIC kirim Need Testing; pemilik melakukan review.';end if;
+    if new.status='Rework' and (length(trim(new.progress_note))=0 or new.progress_note=old.progress_note) then raise exception 'Tuliskan alasan baru untuk pengembalian/reopen';end if;
+   end if;
+  end if;
+ end if;
+ if not new.requires_testing and new.status in ('Ready for Testing','Testing','Rework') then raise exception 'Status ini khusus tugas dengan testing';end if;
+ return new;
+end $$;
+drop trigger if exists fd_tasks_00_workflow on public.fd_tasks;
+create trigger fd_tasks_00_workflow before insert or update on public.fd_tasks for each row execute function public.fd_workflow_guard();
+-- Runs after fd_tasks_rules so PIC field comparisons see only client-written fields.
+create or replace function public.fd_workflow_cycle() returns trigger
+language plpgsql security definer set search_path='' as $$
+begin
+ if tg_op='UPDATE' and new.status='Ready for Testing' and old.status<>'Ready for Testing' then new.test_cycle:=old.test_cycle+1;end if;
+ return new;
+end $$;
+drop trigger if exists fd_tasks_zz_cycle on public.fd_tasks;
+create trigger fd_tasks_zz_cycle before insert or update on public.fd_tasks for each row execute function public.fd_workflow_cycle();
+
+create or replace function public.fd_tg_enqueue_task(p_task uuid,p_key text) returns void
+language plpgsql security definer set search_path='' as $$
+declare t public.fd_tasks; u uuid;
+begin
+ select * into t from public.fd_tasks where id=p_task;
+ if not found then return;end if;
+ for u in select distinct x from unnest(array[t.user_id,t.assignee_id]) x where x is not null loop
+  if exists(select 1 from public.fd_telegram_accounts where user_id=u) then
+   insert into public.fd_telegram_outbox(owner_id,target_user_id,task_id,kind,dedupe_key)
+   values(t.user_id,u,t.id,'task',p_key||':u:'||u) on conflict(dedupe_key) do nothing;
+  end if;
+ end loop;
+ if t.telegram_group_id is not null then
+  insert into public.fd_telegram_outbox(owner_id,target_group_id,task_id,kind,dedupe_key)
+  values(t.user_id,t.telegram_group_id,t.id,'task',p_key||':g:'||t.telegram_group_id) on conflict(dedupe_key) do nothing;
+ end if;
+end $$;
+create or replace function public.fd_task_event() returns trigger
+language plpgsql security definer set search_path='' as $$
+begin
+ if tg_op='INSERT' or new.status is distinct from old.status or new.progress_note is distinct from old.progress_note then
+  insert into public.fd_task_activity(task_id,actor_id,from_status,to_status,test_cycle,note,task_version)
+  values(new.id,auth.uid(),case when tg_op='UPDATE' then old.status else null end,new.status,new.test_cycle,new.progress_note,new.version);
+ end if;
+ if new.recurrence_date is null or new.recurrence_date=(now() at time zone 'Asia/Jakarta')::date or (tg_op='UPDATE' and new.recurrence_date<(now() at time zone 'Asia/Jakarta')::date) then
+  perform public.fd_tg_enqueue_task(new.id,'event:'||new.id||':'||new.version);
+ end if;
+ return new;
+end $$;
+drop trigger if exists fd_tasks_event on public.fd_tasks;
+create trigger fd_tasks_event after insert or update on public.fd_tasks for each row execute function public.fd_task_event();
+
+create or replace function public.fd_tg_new_code(p_hash text,p_kind text) returns void
+language plpgsql security definer set search_path='' as $$
+begin
+ if not public.fd_is_active() then raise exception 'Active account required' using errcode='42501';end if;
+ if p_kind='group' and not exists(select 1 from public.fd_telegram_accounts where user_id=auth.uid()) then raise exception 'Hubungkan akun Telegram pribadi dahulu';end if;
+ delete from public.fd_telegram_codes where user_id=auth.uid() and kind=p_kind;
+ insert into public.fd_telegram_codes(hash,user_id,kind) values(p_hash,auth.uid(),p_kind);
+end $$;
+create or replace function public.fd_tg_redeem(p_hash text,p_telegram bigint,p_chat bigint,p_kind text,p_title text)
+returns void language plpgsql security definer set search_path='' as $$
+declare c public.fd_telegram_codes;
+begin
+ select * into c from public.fd_telegram_codes where hash=p_hash and kind=p_kind and expires_at>now() for update;
+ if not found or not exists(select 1 from public.fd_profiles where id=c.user_id and is_active) then raise exception 'Kode tidak valid atau kedaluwarsa';end if;
+ if p_kind='personal' then
+  if p_chat<>p_telegram or p_chat<=0 then raise exception 'Gunakan chat pribadi bot';end if;
+  insert into public.fd_telegram_accounts(user_id,telegram_id,chat_id) values(c.user_id,p_telegram,p_chat)
+  on conflict(user_id) do update set telegram_id=excluded.telegram_id,chat_id=excluded.chat_id;
+ else
+  if p_chat>=0 or not exists(select 1 from public.fd_telegram_accounts where user_id=c.user_id and telegram_id=p_telegram) then raise exception 'Hanya pemilik kode yang sudah terhubung dapat menghubungkan grup';end if;
+  if exists(select 1 from public.fd_telegram_groups where chat_id=p_chat and owner_id<>c.user_id) then raise exception 'Grup sudah terhubung ke pemilik lain';end if;
+  insert into public.fd_telegram_groups(owner_id,chat_id,title) values(c.user_id,p_chat,left(p_title,200))
+  on conflict(chat_id) do update set active=true,title=excluded.title;
+ end if;
+ delete from public.fd_telegram_codes where hash=p_hash;
+end $$;
+create or replace function public.fd_tg_disconnect(p_group uuid default null) returns void
+language plpgsql security definer set search_path='' as $$
+begin
+ if not public.fd_is_active() then raise exception 'Active account required' using errcode='42501';end if;
+ if p_group is null then
+  delete from public.fd_telegram_accounts where user_id=auth.uid();
+  delete from public.fd_telegram_codes where user_id=auth.uid();
+ else update public.fd_telegram_groups set active=false where id=p_group and owner_id=auth.uid();end if;
+end $$;
+
+-- Transactional update: verifies message binding, current PIC/owner, active accounts,
+-- version, and update_id. Only service_role may call (webhook verifies secret).
+create or replace function public.fd_tg_action(p_update bigint,p_telegram bigint,p_chat bigint,p_message bigint,p_task uuid,p_version integer,p_status text,p_note text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare actor uuid; t public.fd_tasks; prior text:=current_setting('request.jwt.claim.sub',true); n integer;
+begin
+ select a.user_id into actor from public.fd_telegram_accounts a join public.fd_profiles p on p.id=a.user_id and p.is_active where a.telegram_id=p_telegram;
+ if actor is null then raise exception 'Hubungkan akun Focusdesk Anda dahulu';end if;
+ select * into t from public.fd_tasks where id=p_task for update;
+ if not found or not exists(select 1 from public.fd_profiles where id=t.user_id and is_active) or (actor<>t.user_id and actor is distinct from t.assignee_id) then raise exception 'Anda bukan pemilik atau PIC aktif tugas ini';end if;
+ if not exists(select 1 from public.fd_telegram_messages m where m.chat_id=p_chat and m.message_id=p_message and m.task_id=t.id and m.task_version=p_version
+  and ((p_chat>0 and m.target_user_id=actor) or (p_chat<0 and m.target_group_id=t.telegram_group_id and exists(select 1 from public.fd_telegram_groups g where g.id=m.target_group_id and g.active)))) then raise exception 'Pesan tidak terhubung dengan tugas/grup ini';end if;
+ insert into public.fd_telegram_updates(update_id) values(p_update) on conflict do nothing;
+ get diagnostics n=row_count;if n=0 then return jsonb_build_object('duplicate',true);end if;
+ if t.version<>p_version then raise exception 'Pesan sudah lama. Ketik /tasks untuk tombol terbaru.';end if;
+ if p_status is null or p_status not in ('Backlog','To do','In progress','Ready for Testing','Testing','Rework','Done') or length(coalesce(p_note,''))>4000 then raise exception 'Tindakan tidak valid';end if;
+ perform set_config('request.jwt.claim.sub',actor::text,true);
+ update public.fd_tasks set status=p_status,progress_note=coalesce(p_note,progress_note) where id=p_task returning * into t;
+ perform set_config('request.jwt.claim.sub',coalesce(prior,''),true);
+ return jsonb_build_object('status',t.status,'version',t.version);
+end $$;
+
+create or replace function public.fd_tg_claim(p_owner uuid default null,p_limit integer default 8)
+returns setof public.fd_telegram_outbox language plpgsql security definer set search_path='' as $$
+begin
+ -- A crashed/ambiguous send is NOT retried automatically: Telegram has no send idempotency key.
+ update public.fd_telegram_outbox set status='uncertain',last_error='Worker interrupted; inspect Telegram before manual resend' where status='sending' and attempted_at<now()-interval '5 minutes';
+ return query with q as (
+  select id from public.fd_telegram_outbox where status in ('pending','failed') and attempts<5 and next_attempt_at<=now() and (p_owner is null or owner_id=p_owner)
+  order by created_at for update skip locked limit least(greatest(p_limit,1),20)
+ ) update public.fd_telegram_outbox o set status='sending',attempts=attempts+1,attempted_at=now() from q where o.id=q.id returning o.*;
+end $$;
+
+-- Private tables: no client inserts/updates, even via direct Supabase REST.
+do $$declare n text;begin
+ foreach n in array array['fd_telegram_accounts','fd_telegram_groups','fd_telegram_codes','fd_task_activity','fd_telegram_outbox','fd_telegram_messages','fd_telegram_updates'] loop
+  execute format('alter table public.%I enable row level security',n);
+  execute format('revoke all on public.%I from anon,authenticated',n);
+  execute format('grant all on public.%I to service_role',n);
+ end loop;
+end $$;
+grant select on public.fd_telegram_accounts,public.fd_telegram_groups,public.fd_task_activity to authenticated;
+drop policy if exists fd_tg_account_own on public.fd_telegram_accounts;
+create policy fd_tg_account_own on public.fd_telegram_accounts for select to authenticated using(user_id=auth.uid() and public.fd_is_active());
+drop policy if exists fd_tg_group_own on public.fd_telegram_groups;
+create policy fd_tg_group_own on public.fd_telegram_groups for select to authenticated using(owner_id=auth.uid() and public.fd_is_active());
+drop policy if exists fd_activity_access on public.fd_task_activity;
+create policy fd_activity_access on public.fd_task_activity for select to authenticated using(exists(select 1 from public.fd_tasks t where t.id=task_id));
+revoke all on function public.fd_workflow_guard(),public.fd_workflow_cycle(),public.fd_task_event(),public.fd_tg_enqueue_task(uuid,text),public.fd_tg_new_code(text,text),public.fd_tg_redeem(text,bigint,bigint,text,text),public.fd_tg_disconnect(uuid),public.fd_tg_action(bigint,bigint,bigint,bigint,uuid,integer,text,text),public.fd_tg_claim(uuid,integer) from public,anon,authenticated;
+grant execute on function public.fd_tg_new_code(text,text),public.fd_tg_disconnect(uuid) to authenticated;
+grant execute on function public.fd_tg_redeem(text,bigint,bigint,text,text),public.fd_tg_action(bigint,bigint,bigint,bigint,uuid,integer,text,text),public.fd_tg_claim(uuid,integer),public.fd_tg_enqueue_task(uuid,text) to service_role;
+create or replace function public.fd_task_rules() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare contact public.fd_pics;
+begin
+ -- Enforce field-level sharing even when clients call Supabase REST directly.
+ if tg_op='UPDATE' and auth.uid() is not null and auth.uid()<>old.user_id then
+  if not public.fd_is_active() or old.assignee_id is distinct from auth.uid() then raise exception 'Task access denied' using errcode='42501'; end if;
+  if (to_jsonb(new)-array['status','progress_note']) is distinct from (to_jsonb(old)-array['status','progress_note']) then
+   raise exception 'PIC hanya dapat mengubah status dan catatan progres' using errcode='42501';
+  end if;
+  if new.status not in ('To do','In progress','Ready for Testing','Testing','Rework','Done') and new.status is distinct from old.status then raise exception 'PIC tidak dapat mengubah status menjadi Backlog'; end if;
+ else
+  if auth.uid() is not null and new.user_id<>auth.uid() then raise exception 'row-level security: task ownership denied' using errcode='42501'; end if;
+  if new.pic_id is not null then
+   select * into contact from public.fd_pics where id=new.pic_id;
+   if not found or contact.owner_id<>new.user_id then raise exception 'PIC tidak dimiliki pemilik tugas'; end if;
+   if not contact.is_active and (tg_op='INSERT' or new.pic_id is distinct from old.pic_id) then raise exception 'PIC nonaktif tidak dapat menerima penugasan baru'; end if;
+   if contact.linked_user_id is not null and not exists(select 1 from public.fd_profiles where id=contact.linked_user_id and is_active) and (tg_op='INSERT' or new.pic_id is distinct from old.pic_id) then raise exception 'Akun PIC tidak aktif'; end if;
+   new.assignee_id:=contact.linked_user_id;new.pic_name:=contact.name;new.pic_email:=contact.email;
+  else new.assignee_id:=null;new.pic_name:=null;new.pic_email:=null;end if;
+  select display_name,email into new.owner_name,new.owner_email from public.fd_profiles where id=new.user_id;
+ end if;
+ perform pg_advisory_xact_lock(hashtextextended(new.user_id::text,0));
+ if tg_op='UPDATE' then
+  if new.id<>old.id or new.user_id<>old.user_id then raise exception 'Task ownership is immutable'; end if;
+  new.version:=old.version+1;new.created_at:=old.created_at;
+ else new.version:=1;new.created_at:=now();end if;
+ new.updated_at:=clock_timestamp();
+ if new.status='Done' then
+  if tg_op='INSERT' or old.status<>'Done' then new.completed_at:=now();else new.completed_at:=old.completed_at;end if;
+ else new.completed_at:=null;end if;
+ if new.top_focus and new.status<>'Done' and (select count(*) from public.fd_tasks where user_id=new.user_id and scheduled_date=new.scheduled_date and top_focus and status<>'Done' and id<>new.id)>=3 then raise exception 'Maksimal tiga prioritas aktif pada satu tanggal';end if;
+ return new;
+end $$;
+
+create or replace function public.fd_materialize_recurrences(p_until date default null)
+returns integer language plpgsql security definer set search_path='' as $$
+declare r public.fd_recurrences; upper_day date; lower_day date; today_day date:=(now() at time zone 'Asia/Jakarta')::date; inserted_count integer; total_count integer:=0;
+begin
+ if not public.fd_is_active() then raise exception 'Active account required' using errcode='42501';end if;
+ upper_day:=least(coalesce(p_until,today_day+7),today_day+31);
+ if upper_day<today_day then raise exception 'Recurring horizon invalid';end if;
+ perform pg_advisory_xact_lock(hashtextextended('recurrence:'||auth.uid()::text,0));
+ for r in
+  select x.* from public.fd_recurrences x
+  where x.owner_id=auth.uid() and x.active and x.start_date<=upper_day
+   and (x.end_date is null or x.end_date>=greatest(x.start_date,today_day-31))
+   and (not (x.template ? 'pic_id') or exists(
+    select 1 from public.fd_pics p left join public.fd_profiles u on u.id=p.linked_user_id
+    where p.id=(x.template->>'pic_id')::uuid and p.owner_id=x.owner_id and p.is_active
+     and (p.linked_user_id is null or u.is_active)
+   ))
+  for update
+ loop
+  lower_day:=greatest(r.start_date,coalesce(r.generated_through+1,r.start_date),today_day-31);
+  if lower_day<=least(upper_day,coalesce(r.end_date,upper_day)) then
+   insert into public.fd_tasks(
+    user_id,title,category,project,kind,priority,status,due_date,scheduled_date,start_time,duration,notes,top_focus,pic_id,progress_note,
+    recurrence_id,recurrence_date,recurrence_pattern,recurrence_interval,requires_testing,acceptance_criteria,telegram_group_id
+   )
+   select r.owner_id,r.template->>'title',r.template->>'category',coalesce(r.template->>'project',''),r.template->>'kind',r.template->>'priority','To do',
+    case when r.template ? 'due_offset' then d.occurrence_day+(r.template->>'due_offset')::integer else null end,
+    d.occurrence_day,nullif(r.template->>'start_time','')::time,(r.template->>'duration')::integer,coalesce(r.template->>'notes',''),false,
+    case when r.template ? 'pic_id' then (r.template->>'pic_id')::uuid else null end,'',r.id,d.occurrence_day,r.pattern,r.repeat_interval,coalesce((r.template->>'requires_testing')::boolean,false),coalesce(r.template->>'acceptance_criteria',''),case when exists(select 1 from public.fd_telegram_groups g where g.id=nullif(r.template->>'telegram_group_id','')::uuid and g.owner_id=r.owner_id and g.active) then nullif(r.template->>'telegram_group_id','')::uuid else null end
+   from (
+    select x::date occurrence_day from generate_series(lower_day,least(upper_day,coalesce(r.end_date,upper_day)),interval '1 day') x
+   ) d
+   where public.fd_repeat_date(r.pattern,r.repeat_interval,r.start_date,d.occurrence_day)
+   on conflict(recurrence_id,recurrence_date) where recurrence_id is not null do nothing;
+   get diagnostics inserted_count=row_count;total_count:=total_count+inserted_count;
+  end if;
+  update public.fd_recurrences set generated_through=greatest(coalesce(generated_through,start_date-1),least(upper_day,coalesce(end_date,upper_day))),updated_at=now() where id=r.id;
+ end loop;
+ return total_count;
+end $$;
+
+create or replace function public.fd_create_recurrence(p_template jsonb,p_pattern text,p_interval integer,p_end_date date default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare safe jsonb; start_day date; due_day date; today_day date:=(now() at time zone 'Asia/Jakarta')::date; contact_id uuid; recurrence public.fd_recurrences; made integer;
+begin
+ if not public.fd_is_active() then raise exception 'Active account required' using errcode='42501';end if;
+ if p_template is null or jsonb_typeof(p_template)<>'object' or p_pattern not in ('daily','weekdays','weekly') or p_pattern is null or p_interval is null or p_interval not between 1 and 30 then raise exception 'Recurring values invalid';end if;
+ start_day:=(p_template->>'scheduled_date')::date;due_day:=nullif(p_template->>'due_date','')::date;contact_id:=nullif(p_template->>'pic_id','')::uuid;
+ if start_day is null or p_end_date is not null and p_end_date<start_day then raise exception 'Recurring task needs a valid start/end date';end if;
+ if length(trim(coalesce(p_template->>'title',''))) not between 1 and 180 or p_template->>'category' not in ('Full Time','Property','Web Development') or p_template->>'kind' not in ('Delivery','Meeting','Marketing','Follow-up') or p_template->>'priority' not in ('High','Medium','Low') then raise exception 'Recurring task template invalid';end if;
+ if length(coalesce(p_template->>'project',''))>100 or length(coalesce(p_template->>'notes',''))>4000 or (p_template->>'duration')::integer not between 5 and 720 then raise exception 'Recurring task template invalid';end if;
+ if nullif(p_template->>'start_time','') is not null and extract(hour from nullif(p_template->>'start_time','')::time)*60+extract(minute from nullif(p_template->>'start_time','')::time)+(p_template->>'duration')::integer>1440 then raise exception 'Sesi tidak boleh melewati tengah malam';end if;
+ if contact_id is not null and not exists(select 1 from public.fd_pics where id=contact_id and owner_id=auth.uid() and is_active) then raise exception 'PIC tidak aktif atau bukan milik Anda';end if;
+ safe:=jsonb_build_object(
+  'title',trim(p_template->>'title'),'category',p_template->>'category','project',trim(coalesce(p_template->>'project','')),
+  'kind',p_template->>'kind','priority',p_template->>'priority','start_time',coalesce(p_template->>'start_time',''),
+  'duration',(p_template->>'duration')::integer,'notes',coalesce(p_template->>'notes','')
+ );
+ safe:=safe||jsonb_build_object('requires_testing',coalesce((p_template->>'requires_testing')::boolean,false),'acceptance_criteria',coalesce(p_template->>'acceptance_criteria',''),'telegram_group_id',nullif(p_template->>'telegram_group_id',''));
+ if length(safe->>'acceptance_criteria')>4000 then raise exception 'Kriteria terlalu panjang';end if;
+ if nullif(safe->>'telegram_group_id','') is not null and not exists(select 1 from public.fd_telegram_groups where id=(safe->>'telegram_group_id')::uuid and owner_id=auth.uid() and active) then raise exception 'Grup bukan milik Anda';end if;
+ if contact_id is not null then safe:=safe||jsonb_build_object('pic_id',contact_id);end if;
+ if due_day is not null then safe:=safe||jsonb_build_object('due_offset',due_day-start_day);end if;
+ insert into public.fd_recurrences(owner_id,template,pattern,repeat_interval,start_date,end_date)
+ values(auth.uid(),safe,p_pattern,p_interval,start_day,p_end_date) returning * into recurrence;
+ made:=public.fd_materialize_recurrences(greatest(today_day+14,start_day));
+ return jsonb_build_object('id',recurrence.id,'pattern',recurrence.pattern,'repeat_interval',recurrence.repeat_interval,'start_date',recurrence.start_date,'end_date',recurrence.end_date,'created',made);
+end $$;
+
+
+
+-- Daily server materialization without exposing arbitrary account impersonation.
+create or replace function public.fd_tg_daily() returns integer
+language plpgsql security definer set search_path='' as $$
+declare u uuid; a record; n integer:=0; d date:=(now() at time zone 'Asia/Jakarta')::date; prior text:=current_setting('request.jwt.claim.sub',true);
+begin
+ perform pg_advisory_xact_lock(hashtextextended('fd-telegram-daily',0));
+ for u in select distinct r.owner_id from public.fd_recurrences r join public.fd_profiles p on p.id=r.owner_id and p.is_active where r.active loop
+  perform set_config('request.jwt.claim.sub',u::text,true);
+  n:=n+public.fd_materialize_recurrences(d+14);
+ end loop;
+ perform set_config('request.jwt.claim.sub',coalesce(prior,''),true);
+ for a in select x.* from public.fd_telegram_accounts x join public.fd_profiles p on p.id=x.user_id and p.is_active loop
+  insert into public.fd_telegram_outbox(owner_id,target_user_id,kind,day,dedupe_key)
+  values(a.user_id,a.user_id,'digest',d,'daily:'||d||':u:'||a.user_id) on conflict do nothing;
+ end loop;
+ for a in select g.* from public.fd_telegram_groups g join public.fd_profiles p on p.id=g.owner_id and p.is_active where g.active loop
+  insert into public.fd_telegram_outbox(owner_id,target_group_id,kind,day,dedupe_key)
+  values(a.owner_id,a.id,'digest',d,'daily:'||d||':g:'||a.id) on conflict do nothing;
+ end loop;
+ delete from public.fd_telegram_codes where expires_at<now();
+ delete from public.fd_telegram_updates where created_at<now()-interval '30 days';
+ delete from public.fd_telegram_messages where created_at<now()-interval '30 days';
+ delete from public.fd_telegram_outbox where status in ('sent','skipped') and created_at<now()-interval '90 days';
+ return n;
+end $$;
+revoke all on function public.fd_tg_daily() from public,anon,authenticated;
+grant execute on function public.fd_tg_daily() to service_role;
+
+commit;

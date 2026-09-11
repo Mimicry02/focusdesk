@@ -1,0 +1,20 @@
+import {HttpError,uuid,sb} from './core.js';
+import {wibDay} from './digest.js';
+export const basisLabels={scheduled:'Tanggal pengerjaan',due:'Deadline',completed:'Tanggal selesai (WIB)'};
+export const scopeLabels={owned:'Tugas yang saya kelola',assigned:'Ditugaskan kepada saya',all:'Semua tugas yang dapat saya akses'};
+export function reportFilters(q){
+ const month=q.month||wibDay().slice(0,7);if(typeof month!=='string'||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(month))throw new HttpError(400,'Bulan harus YYYY-MM (2000–2099)');
+ const basis=q.basis||'scheduled',scope=q.scope||'owned',category=q.category||'all',pic=q.pic||'all';
+ if(!Object.hasOwn(basisLabels,basis)||!Object.hasOwn(scopeLabels,scope)||!['all','Full Time','Property','Web Development'].includes(category)||typeof pic!=='string')throw new HttpError(400,'Filter laporan tidak valid');
+ if(!['all','self'].includes(pic))uuid(pic);const [y,m]=month.split('-').map(Number);return{month,start:month+'-01',end:new Date(Date.UTC(y,m,1)).toISOString().slice(0,10),basis,scope,category,pic};
+}
+export function summarize(rows,day=wibDay()){
+ const count=s=>rows.filter(t=>t.status===s).length;const picGroups=new Map();const categories=new Map();
+ for(const t of rows){const k=t.pic_id||'self:'+t.user_id;const group=picGroups.get(k)||{pic_id:t.pic_id,name:t.pic_name||t.owner_name||'Pemilik tugas',email:t.pic_email||t.owner_email||'',tasks:0,done:0,minutes:0};group.tasks++;group.done+=Number(t.status==='Done');group.minutes+=t.duration;picGroups.set(k,group);const c=categories.get(t.category)||{name:t.category,tasks:0,done:0,minutes:0};c.tasks++;c.done+=Number(t.status==='Done');c.minutes+=t.duration;categories.set(t.category,c);}
+ return{total:rows.length,done:count('Done'),inProgress:count('In progress'),toDo:count('To do'),backlog:count('Backlog'),readyForTesting:count('Ready for Testing'),testing:count('Testing'),rework:count('Rework'),overdueNow:rows.filter(t=>t.due_date&&t.due_date<day&&t.status!=='Done').length,minutes:rows.reduce((a,t)=>a+t.duration,0),byPic:[...picGroups.values()],byCategory:[...categories.values()]};
+}
+export async function buildReport(ctx,q){const filters=reportFilters(q);const rows=await sb('/rest/v1/rpc/fd_report_tasks',{method:'POST',token:ctx.token,data:{p_start:filters.start,p_end:filters.end,p_basis:filters.basis,p_scope:filters.scope,p_category:filters.category==='all'?null:filters.category,p_pic:['all','self'].includes(filters.pic)?null:filters.pic,p_self:filters.pic==='self'}});return{filters,generatedAt:new Date().toISOString(),generatedDay:wibDay(),owner:ctx.profile.display_name||ctx.profile.email,summary:summarize(rows),rows};}
+export const columns=['Task ID','Task','Category','Project','Task type','Owner','Owner email','PIC','PIC email','Priority','Current status','Deadline','Scheduled date','Start time (WIB)','Estimated minutes','Completed at (WIB)','Progress note','Task notes','Version','Requires testing','Test cycle','Acceptance criteria'];
+export function rowValues(t){return[t.id,t.title,t.category,t.project,t.kind,t.owner_name||'',t.owner_email||'',t.pic_name||t.owner_name||'Pemilik tugas',t.pic_email||t.owner_email||'',t.priority,t.status,t.due_date||'',t.scheduled_date||'',t.start_time?.slice(0,5)||'',t.duration,t.completed_at?new Date(t.completed_at).toLocaleString('sv-SE',{timeZone:'Asia/Jakarta'}):'',t.progress_note||'',t.notes,t.version,t.requires_testing?'Yes':'No',t.test_cycle||0,t.acceptance_criteria||''];}
+export function csvCell(value){if(typeof value==='number'&&Number.isFinite(value))return String(value);let s=String(value??'');if(/^[\s]*[=+\-@]/u.test(s)||/^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}
+export function csvReport(report){const meta=['Report month','Basis','Scope','Category filter','PIC filter','Generated at UTC'];const data=report.rows.map(t=>[...rowValues(t),report.filters.month,basisLabels[report.filters.basis],scopeLabels[report.filters.scope],report.filters.category,report.filters.pic,report.generatedAt]);return '\uFEFF'+[[...columns,...meta],...data].map(row=>row.map(csvCell).join(',')).join('\r\n')+'\r\n';}

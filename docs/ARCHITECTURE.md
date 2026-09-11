@@ -1,87 +1,80 @@
-# Focusdesk v1.0 — PRD, Architecture, Schema, Rules
+# Architecture — Focusdesk 1.3.0
 
-## PRD
+## Stack dan struktur
 
-Satu aplikasi untuk rencana kerja System Analyst, freelance Property, dan Web Development. Pengguna awal satu owner, dengan kemungkinan pengguna independen lainnya. Tujuan: kelola prioritas, kapasitas, jadwal, follow-up, dan akses akun. Tidak ada workspace/tugas bersama pada versi ini.
+Vanilla HTML/CSS/ES modules; Node 22 Vercel Functions; Supabase Auth + PostgreSQL/PostgREST; Telegram Bot API; ExcelJS 4.4.0; Resend opsional. Tidak ada bot polling process, frontend secret, atau dependency AI.
 
-Alur: login → rencana hari → CRUD tugas → jadwal → fokus → update status → review. Admin: login → invite → user membuat password → aktif → manage role/status. Pendaftaran tanpa undangan tidak ditampilkan; akun Auth yang dibuat di luar alur admin tetap inactive.
-
-Kriteria penerimaan: data lintas perangkat dari Supabase; user A tidak mengakses tugas B; user tidak bisa menaikkan role; akun inactive ditolak; admin dapat mengundang/mengelola akun lain; perubahan tab lama menghasilkan konflik; tidak ada service key di browser; tidak mengisi dashboard dengan data contoh.
-
-## Stack dan alasan
-
-HTML/CSS/JavaScript ES modules menjaga format HTML sebelumnya dan mudah dipaketkan. Tidak perlu instalasi framework untuk runtime. Vercel Node.js Functions menjalankan backend; Supabase PostgreSQL + Auth menyimpan data dan identitas. Frontend bukan Nuxt; migrasi framework tidak diperlukan untuk permintaan paket HTML saat ini. Supabase dan Vercel mengikuti pilihan pengguna. Jika kebutuhan berkembang, konfirmasi apakah pilihan ini didorong familiarity, biaya, atau kebutuhan teknis sebelum mengganti stack.
-
-Aplikasi tidak memerlukan Sites hosting/identitas ChatGPT; paket ini dibuat untuk akun Vercel pengguna. Tidak ada deployment yang dilakukan sebagai bagian dari pembuatan ZIP.
-
-## Folder
-
-| Folder | Fungsi |
+| Folder/file | Tanggung jawab |
 | --- | --- |
-| public/index.html | Entry HTML |
-| public/css/ | CSS tema yang diteruskan dari prototype + layout produksi |
-| public/js/app.js | UI state, halaman, form, event handlers |
-| public/js/model.js | Fungsi waktu WIB, konflik, escaping, ICS |
-| public/js/api.js | HTTP same-origin, error handling |
-| api/auth.js | Login/session/recovery/password/logout |
-| api/tasks.js | CRUD milik user, validasi dan version check |
-| api/profile.js | Profile/preferences/delivery status |
-| api/users.js | Admin-only invite, access change, reset |
-| api/digest.js | Cron secret atau manual authenticated send |
-| server/core.js | Supabase HTTP client, cookies, session validation, CSRF/origin gate |
-| server/task-validation.js | Allowlist field dan validasi server |
-| server/digest.js | Ringkasan, claim, provider request, delivery status |
-| supabase/ | Schema dan bootstrap admin |
-| scripts/ | Build dan pengujian database opsional |
-| tests/ | Pengujian logika dan API |
-| docs/ | Panduan penggunaan dan setup |
+| public/index.html, css/ | Shell dan tampilan Focusdesk |
+| public/js/app.js | State, modal task, settings/pairing, workflow, reports |
+| public/js/workflow.js | Enum status, aksi/label UI dan bot; bukan enforcement keamanan |
+| public/js/api.js | Same-origin API, cookie HttpOnly |
+| api/tasks.js | CRUD/version checks, recurrence, activity read, flush antrean |
+| api/telegram.js | Authenticated pairing/settings/admin webhook/manual queue |
+| api/telegram-webhook.js | POST terautentikasi secret header, tanpa browser Origin |
+| api/telegram-cron.js | Bearer CRON_SECRET; daily materialization/digest atau queue-only |
+| server/core.js | Supabase calls, cookie session, active user, CSRF Origin, validation |
+| server/telegram.js | Telegram transport, formatting, strict reply parser, delivery worker |
+| server/report*.js | Snapshot report, CSV injection protection, Excel export |
+| supabase/01–05 | Schema dasar, PIC/report, recurrence, Telegram/workflow |
+| supabase/06_optional_queue_worker.sql | Opt-in Supabase Cron HTTP queue worker |
+| tests/, scripts/test-*.mjs | Unit/mock API, SQL/PGlite, browser mock smoke |
 
-## Aliran autentikasi/data
+## Service flow
 
-Browser POST login → Vercel menghubungi Supabase Auth → server memeriksa fd_profiles.is_active → access/refresh token ditempatkan dalam cookie HttpOnly/Secure/SameSite=Lax. Browser tidak menyimpan token di localStorage. API memverifikasi user dengan Supabase Auth, memeriksa status terkini, dan mengakses tabel dengan JWT user tersebut sehingga RLS tetap berlaku.
+Task save: Browser → Vercel session/Origin validation → Supabase RLS + trigger guards → task/activity/outbox commit → immediate delivery attempt. Provider failure is separate from committed task state. Raw Supabase client updates are still checked by SQL workflow/PIC triggers.
 
-Setiap mutasi mensyaratkan Origin sama dengan APP_URL dan Content-Type JSON. APP_URL adalah allowlist yang dikonfigurasi, bukan nilai Host yang dipercaya begitu saja. Header Content-Security-Policy membatasi script/connect ke origin sendiri; user text di-escape sebelum menjadi markup. Cookie auth dan data response tidak di-cache.
+Telegram: callback/reply → webhook secret check → numeric user ID mapping → active profile/current ownership/message binding → service-only fd_tg_action → row lock, version, update_id → guarded status transaction → new outbox events → Telegram. No action resolves a task by fuzzy title.
 
-Undangan/reset memakai default Supabase confirmation link. Setelah konfirmasi, token fragment diterima halaman lalu langsung dihapus dari history. Token diverifikasi server sebelum cookie dibuat. User menetapkan password lalu login normal. Jangan mengubah email template ke PKCE/custom token_hash tanpa mengubah callback implementasi. Link invite/recovery tidak menerima redirect dari input pengguna; redirect berasal dari APP_URL.
+Pairing: authenticated browser requests random 192-bit code → SHA256 hash stored, expiry 10 minutes → user sends code → server validates private/group context and group admin → transactional redeem consumes code and connects identity. Telegram ID is unique across accounts; usernames are display/routing only.
 
-Refresh token disimpan maksimum tujuh hari di cookie dan dirotasi saat diperlukan. JWT access maksimal satu jam. Request auth gagal membersihkan cookie. Deactivation ditegakkan oleh profile check dan RLS pada request berikutnya; bukan push-based remote wipe.
+Daily: Vercel cron → service-only fd_tg_daily → active owners' recurrences materialized → dated personal/group summary outbox → claim/process up to 20. Optional queue-only worker drains pending retries without generating a daily summary at other times.
 
-## Role matrix
+## Data model
 
-| Aksi | User aktif | Admin aktif | Inactive / anonymous |
-| --- | --- | --- | --- |
-| Baca/edit tugas sendiri | Ya | Ya | Tidak |
-| Baca/edit tugas akun lain | Tidak | Tidak | Tidak |
-| Edit nama/preferensi sendiri | Ya | Ya | Tidak |
-| Lihat daftar akun | Tidak | Ya | Tidak |
-| Invite/reset akun lain | Tidak | Ya | Tidak |
-| Ubah role/status akun lain | Tidak | Ya | Tidak |
-| Ubah role/status sendiri | Tidak | Tidak | Tidak |
+All app tables use fd_ prefix. Full SQL is authoritative for fields, defaults, indexes, constraints and grants; table summary below highlights relations.
 
-## Skema
-
-Semua tabel memakai prefix fd_ agar terpisah dari tabel aplikasi lain; tetap disarankan project khusus.
-
-| Tabel | Field penting | Relasi / aturan |
+| Table | Key fields/types | Relations / constraints |
 | --- | --- | --- |
-| fd_profiles | id uuid PK; email text; display_name text; role text; is_active boolean; created_at/updated_at timestamptz | id → auth.users, cascade; role CHECK admin/user; default inactive/user; role/status tidak mendapat grant UPDATE user |
-| fd_preferences | user_id uuid PK; capacity integer; email_enabled boolean | FK profiles; capacity 30–1440; default 360 dan false |
-| fd_tasks | id uuid PK; user_id uuid; title/category/project/kind/priority/status text; due_date/scheduled_date date; start_time time; duration integer; notes text; top_focus boolean; completed_at/created_at/updated_at timestamptz; version integer | FK profiles; field enum CHECK; duration 5–720; title 1–180; no midnight overflow; top_focus butuh scheduled date; ownership immutable |
-| fd_audit | id bigint identity; actor_id/target_id uuid; action text; details jsonb; created_at timestamptz | FK profiles; admin read; RPC menulis perubahan akses |
-| fd_deliveries | user_id uuid + day date composite PK; status text; attempt_at/accepted_at timestamptz; provider_id/last_error text | FK profiles; satu klaim per hari; hanya server menulis, owner membaca |
+| fd_profiles | id uuid PK, email text, display_name text, role text, is_active bool | auth.users FK; role admin/user; inactive by default |
+| fd_preferences | user_id uuid PK, capacity int, email_enabled bool | profile FK |
+| fd_tasks | id uuid PK, user_id uuid, status text, version int, scheduled/due date, completed_at timestamptz | Owner/profile, PIC, assignee/profile, recurrence, Telegram group FKs |
+| fd_pics | id uuid PK, owner_id uuid, name/email text, linked_user_id uuid? | Unique lower(email) per owner; linked account optional |
+| fd_recurrences | id uuid, owner_id uuid, template jsonb, pattern text, interval int, start/end date, generated_through date | Owner FK; interval 1–30; unique task recurrence_id/date |
+| fd_telegram_accounts | user_id uuid PK, telegram_id bigint UNIQUE, chat_id bigint | Profile FK; positive Telegram ID, private chat_id = Telegram ID |
+| fd_telegram_groups | id uuid PK, owner_id uuid, chat_id bigint UNIQUE, title text, active bool | Negative chat ID; one owner per group |
+| fd_telegram_codes | hash text PK, user_id uuid, kind text, expires_at timestamptz | Hash length 64; personal/group; consumed on success |
+| fd_task_activity | id uuid, task_id uuid, actor_id uuid?, from/to_status text, cycle/version int, note text, created_at | Append-only to clients; task FK cascade; index task/time |
+| fd_telegram_outbox | id uuid, owner_id, target_user_id? / target_group_id?, task_id?, kind, day, dedupe_key UNIQUE, status, attempts, timestamps | Exactly one target; pending/sending/sent/failed/uncertain/skipped |
+| fd_telegram_messages | chat_id bigint + message_id bigint PK, task_id, task_version, target IDs | Binds Telegram message to exact task version/context |
+| fd_telegram_updates | update_id bigint PK, created_at | Transactional dedup of successful status updates |
+| fd_assignment_messages | task/version/recipient email UNIQUE, payload jsonb, status | Previous email assignment delivery snapshots |
+| fd_deliveries | user_id + day PK, status | Previous daily email claims |
+| fd_audit | bigint identity, actor/target uuid, details jsonb | User access changes |
 
-RLS is_active dan is_admin memakai SECURITY DEFINER dengan search_path kosong, akses berdasarkan auth.uid dari token, bukan body atau raw_user_meta_data. Semua metadata role/is_active dari signup diabaikan. Profile display_name hanya update kolom yang diizinkan. Direct inserts/updates role tidak diberikan kepada authenticated.
+Task additions: requires_testing boolean default false; acceptance_criteria text default empty, max 4000; test_cycle int default 0 derived by trigger; telegram_group_id nullable UUID. Status enum: Backlog, To do, In progress, Ready for Testing, Testing, Rework, Done. Reviewer is task.user_id; no tester_id in this release.
 
-Trigger tugas mengunci per owner sebelum Top 3 check, memelihara version/timestamps dan completed_at. API PATCH/DELETE memfilter id+version; no matching row menghasilkan 409. RPC admin menserialisasi perubahan akses dan memeriksa ulang role aktif; self-change dilarang. Bootstrap admin dilakukan owner database melalui SQL, bukan first-user-wins.
+## Security and consistency
 
-## Waktu dan email
+- Service-role secret/bot token stay on server. Browser only receives application data and one-time pairing code.
+- All client mutation requests require trusted Origin + JSON. Webhook instead requires exact secret header; cron requires long Bearer secret.
+- RLS owner/PIC access for tasks, owner-only contacts/groups/connections, task-bound activity read. Admin role alone does not read other people's tasks.
+- Telegram private tables and all write paths revoked from anon/authenticated. Only scoped pairing/disconnect RPCs exposed to authenticated; redeem/action/claim/daily service-only.
+- SQL fd_workflow_guard runs before existing PIC field guard; derived cycle runs after it. PIC can change only status/progress, not new testing or group fields.
+- requires_testing cannot be disabled after activation. Initial testing task cannot start Done. Reviewer-only pass requires Testing. Rework requires new nonempty reason.
+- fd_tg_action locks task, checks current access/context/version, inserts update_id and updates status in one transaction. On exception, the update ID insertion rolls back. Temporary auth.uid context is set only inside service-only RPC and restored.
+- Provider side has no atomic commit with DB. A returned Telegram message ID is recorded before marking sent. Timeout or bookkeeping failure is uncertain, not blindly retried. Abandoned sending claims become uncertain after 5 minutes.
+- Outbox workers claim with FOR UPDATE SKIP LOCKED. Retry applies to explicit transient failures, max 5 attempts. Queue-only worker is optional for timeliness; default daily is not a low-latency retry SLA.
+- Content HTML-escaped. Internal notes/email excluded from Telegram. Group progress/criteria intentionally shared; old messages are not revoked.
+- Telegram groups/channels/forum topics migrations are not auto-discovered; this release supports ordinary groups/supergroups and private chat, not channels or separate topic routing.
 
-Versi ini menetapkan timezone Asia/Jakarta untuk semua pengguna. Tanggal jadwal + jam lokal disimpan terpisah; audit timestamps UTC/timestamptz. Calendar export mengonversi WIB ke UTC. Deadline tidak diubah otomatis saat jadwal dipindah.
+## Retention and maintenance
 
-Vercel Cron sekali sehari pada 01:00 UTC (target 08:00 WIB). Hobby memberi ketelitian per jam. Manual send dan cron memakai satu klaim per user/tanggal WIB dan idempotency key provider yang stabil. Status accepted bukan inbox delivery. Kegagalan bisa dicoba ulang; tidak ada persistent queue/automatic retry worker atau delivery webhook pada versi ini. Batas 10 akun opted-in aktif dan 500 tugas per email. Scale-up memerlukan antrean; jangan menaikkan batas tanpa analisis durasi/server/provider rate limit.
+Daily cleanup removes expired pairing codes, update/message mappings older than 30 days, and sent/skipped queue records older than 90 days. Older message buttons therefore stop working; obtain current cards. Pending/failed/uncertain records remain for inspection. Activity stays until task deletion; FK cascades are described in SQL. Export/backup before deletion when audit retention is required.
+
+Combined upgrade wraps 03 + 04 + 05 in one transaction. Optional 06 is not auto-included. Existing tasks default to testing=false and group=NULL; no retroactive notification blast for all old tasks. Existing ongoing series adopt testing/group fields only when new templates are created; per-occurrence edits do not change series template.
 
 ## Coding rules
 
-ES modules; camelCase untuk fungsi/variabel, snake_case untuk database dan data API. Validasi client membantu UX, server+database otoritatif. Jangan memasukkan env/secrets di public/. Jangan membagikan key service role ke browser. Semua konten pengguna harus melewati escapeHTML; jangan membuat event handler inline. Role/state UI tidak menjadi sumber otorisasi. Gunakan SQL migrations untuk perubahan berikutnya, bukan drop database. Tangani optimistic concurrency sebelum overwrite data.
-
-Gunakan unit/API tests untuk aturan penting. Isolasi RLS perlu pengujian database nyata; mock saja tidak cukup. Lihat TEST_RESULTS.md untuk batas verifikasi paket ini.
+Validate server inputs and SQL invariants; never trust UI button visibility. Parameterize SQL/RPC arguments; validate IDs before REST query composition. Do not log tokens/cookies/provider URLs. Avoid arbitrary user-ID impersonation RPC grants. Keep package lock and Node target consistent; version all release labels. Use additive reviewed migrations, explicit RLS/grants, regression tests and staging deployment. Do not change completed_at manually or rewrite activity history to fake completion. External writes/credentials must be configured by authorized operator.

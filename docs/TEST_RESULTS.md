@@ -1,29 +1,34 @@
-# Verification record — Focusdesk v1.0
+# Test results — Focusdesk 1.3.0
 
-## Passed locally
+Tanggal: 11 September 2026. Tidak memakai project Supabase, akun Vercel, atau token Telegram pengguna. Tidak ada pesan/undangan live yang dikirim oleh pengujian ini.
 
-- `npm test`: 12 tests. Validasi task allowlist, dates/time bounds, konflik jadwal, escaping HTML, ekspor UTC/ICS, trusted Origin, cron secret, request body, admin API guard, inactive-account denial, HttpOnly cookie session, no token JSON.
-- `npm run build`: public assets copied successfully.
-- JavaScript syntax checks on all modules.
-- `scripts/test-sql.mjs` using local PostgreSQL engine PGlite: schema applied twice without failure; inactive-by-default Auth trigger; signup metadata cannot grant admin; per-user RLS; admin cannot read other tasks; column grant prevents role escalation; role RPC guard/self-protection; Top 3; task version/completion timestamps; midnight constraints; inactive denial; digest claim deduplication.
+## Lolos lokal
 
-## Not yet verified against your infrastructure
+- 28 unit/mock API tests melalui npm test: login/cookie, Origin, active account, PIC access, task validation, recurrence validation, CSV/XLSX export, Telegram escaping/reply parsing, webhook/cron secrets, timeout/429 behavior, disconnected-recipient skip.
+- npm run build: output static berhasil. Vercel membangun API functions secara terpisah saat deployment.
+- PGlite PostgreSQL tests: schema dasar, PIC/reports, recurring, dan Telegram/testing.
+- Telegram SQL suite: fresh schema + migration replay/data preservation, one-use pairing, grant restrictions, owner/PIC RLS, reviewer-only testing, required fail reason, cycle 1 → 2, completion time, rejected stale message, duplicate update_id, inactive account, recurrence template fields, daily dedup, abandoned sending → uncertain.
+- Node syntax checks untuk modul baru dan frontend.
 
-- Vercel production function compilation/deployment, cookies on your domain.
-- Hosted Supabase Auth invitation/recovery and token refresh behavior with your settings.
-- Actual SMTP/Resend delivery, domain verification, cron invocation timing.
-- Browser visual/end-to-end testing and multi-session concurrency load tests.
+## Belum diverifikasi
 
-The SQL test uses a minimal auth.users/auth.uid stub in local PostgreSQL. It verifies SQL/RLS behavior but does not emulate Supabase Auth's entire service. Source API tests use mocked provider responses. No production credentials, SMTP account, or user data were accessed.
+- Deploy Vercel production dan Node 22 di Vercel. Runtime lokal menggunakan Node 24; package target tetap Node 22 dan hanya memakai API kompatibel Node 22.
+- HTTP/PostgREST nyata, Supabase Auth SMTP, custom domain, Deployment Protection.
+- BotFather/webhook/pairing/tombol/group permissions dengan bot live, rate-limit dan delivery jaringan nyata.
+- Cron pukul 08 WIB di production, optional Supabase pg_cron/pg_net/Vault worker dan kuota.
+- Browser visual/end-to-end desktop/mobile: script smoke test disertakan, tetapi tidak selesai dijalankan karena binary Chromium belum tersedia dan download timed out. Tidak ada klaim screenshot/browser QA lolos.
+- Load testing, penetration test eksternal, atau audit compliance.
 
-## After deployment — essential smoke test
+## Reproduksi
 
-1. Login admin A. Create task A, refresh, verify persistence.
-2. Invite user B. In a separate browser session, set password and login. Ensure A's task is absent; create task B.
-3. Ensure user B has no User management access; admin A cannot see B's task in task views.
-4. Deactivate B from admin. B's next refresh/API operation must fail and clear the workspace view.
-5. Reactivate B and login again; their task should remain.
-6. Edit the same task in two tabs. Saving the stale version should display a conflict, not overwrite silently.
-7. Test Forgot password/Change password after SMTP setup.
-8. Configure optional briefing, send once, verify provider/inbox, and verify a second same-day request is skipped.
-9. Import one calendar test event; confirm time in WIB. Clean up the calendar event manually afterwards.
+```bash
+npm ci
+npm test
+npm run build
+```
+
+Untuk SQL, sediakan paket @electric-sql/pglite pada lingkungan pengujian (bukan production), lalu jalankan scripts/test-sql.mjs, test-pic-sql.mjs, test-recurring-sql.mjs, test-telegram-sql.mjs. Jika paket ada di folder terpisah, PGLITE_MODULE dapat diisi absolute path entrypoint-nya.
+
+scripts/test-ui.mjs menggunakan Playwright dan Chromium yang harus diinstal di lingkungan QA. PLAYWRIGHT_MODULE dapat menunjuk entrypoint Playwright di folder terpisah. Script hanya menggunakan API mocks; lolos script itu pun bukan bukti bot live sudah terhubung.
+
+Lakukan checklist integrasi di README sebelum digunakan oleh tim. Simpan backup database dan ZIP versi sebelumnya.

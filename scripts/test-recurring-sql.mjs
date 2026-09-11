@@ -1,0 +1,45 @@
+import {readFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const {PGlite}=await import(process.env.PGLITE_MODULE||'@electric-sql/pglite');
+const db=new PGlite();
+await db.exec(`create schema auth; create role anon; create role authenticated; create role service_role bypassrls;
+create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb not null default '{}'::jsonb);
+create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+grant usage on schema auth to authenticated,anon,service_role; grant execute on function auth.uid() to authenticated,anon,service_role;`);
+for(const file of ['supabase/01_schema.sql','supabase/03_pic_reports.sql','supabase/04_recurring_tasks.sql'])await db.exec(await readFile(file,'utf8'));
+await db.exec(await readFile('supabase/04_recurring_tasks.sql','utf8'));
+const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
+await db.query(`insert into auth.users values($1,'owner@example.com','{}'),($2,'dev@example.com','{}')`,[A,B]);
+await db.exec('update fd_profiles set is_active=true');
+async function asUser(id,fn){await db.exec('set role authenticated');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);try{return await fn()}finally{await db.exec('reset role');await db.exec("select set_config('request.jwt.claim.sub','',false)")}}
+let seriesId,firstId,firstDate;
+await asUser(A,async()=>{
+ const template={title:'3 Posts Area Tangerang',category:'Property',project:'Marketing Tangerang',kind:'Marketing',priority:'Medium',status:'To do',scheduled_date:'2026-09-10',due_date:'2026-09-10',start_time:'09:00',duration:60,notes:'Instagram, TikTok, marketplace',top_focus:false,pic_id:null};
+ const result=(await db.query(`select fd_create_recurrence($1::jsonb,'daily',1,'2026-09-13') result`,[JSON.stringify(template)])).rows[0].result;
+ seriesId=result.id;
+ const rows=(await db.query('select * from fd_tasks where recurrence_id=$1 order by recurrence_date',[seriesId])).rows;
+ assert.equal(rows.length,4);assert.deepEqual(rows.map(x=>x.recurrence_date.toISOString().slice(0,10)),['2026-09-10','2026-09-11','2026-09-12','2026-09-13']);
+ assert.ok(rows.every(x=>x.status==='To do'&&!x.top_focus&&x.recurrence_pattern==='daily'&&x.recurrence_interval===1));
+ assert.ok(rows.every(x=>x.pic_id===null));assert.ok(rows.every(x=>x.due_date.toISOString().slice(0,10)===x.scheduled_date.toISOString().slice(0,10)));
+ firstId=rows[0].id;firstDate=rows[0].recurrence_date.toISOString().slice(0,10);
+ assert.equal((await db.query(`select fd_materialize_recurrences('2026-09-13') made`)).rows[0].made,0);
+ assert.equal((await db.query('select count(*)::int n from fd_tasks where recurrence_id=$1',[seriesId])).rows[0].n,4);
+ const hardened=(await db.query(`select fd_create_recurrence($1::jsonb,'daily',1,'2026-09-10') result`,[JSON.stringify({...template,title:'Server strips focus',top_focus:true})])).rows[0].result;
+ assert.equal((await db.query('select top_focus from fd_tasks where recurrence_id=$1',[hardened.id])).rows[0].top_focus,false);
+});
+await asUser(B,async()=>{assert.equal((await db.query('select * from fd_recurrences')).rows.length,0);assert.equal((await db.query('select * from fd_tasks where recurrence_id=$1',[seriesId])).rows.length,0)});
+await asUser(A,async()=>{
+ await db.query("update fd_tasks set status='Done' where id=$1",[firstId]);
+ const removed=(await db.query('select fd_stop_recurrence($1,$2,true) removed',[seriesId,firstDate])).rows[0].removed;
+ assert.equal(removed,3);assert.equal((await db.query('select active from fd_recurrences where id=$1',[seriesId])).rows[0].active,false);
+ assert.equal((await db.query('select count(*)::int n from fd_tasks where recurrence_id=$1',[seriesId])).rows[0].n,1);
+ assert.equal((await db.query(`select fd_materialize_recurrences('2026-09-30') made`)).rows[0].made,0);
+ await db.exec('reset role');
+ const weekday=(await db.query(`select array_agg(d::date order by d) days from generate_series('2026-09-10'::date,'2026-09-16'::date,'1 day') d where fd_repeat_date('weekdays',1,'2026-09-10',d::date)`)).rows[0].days.map(d=>d.toISOString().slice(0,10));
+ assert.deepEqual(weekday,['2026-09-10','2026-09-11','2026-09-14','2026-09-15','2026-09-16']);
+ assert.equal((await db.query(`select fd_repeat_date('weekly',2,'2026-09-10','2026-09-24') ok`)).rows[0].ok,true);
+ assert.equal((await db.query(`select fd_repeat_date('weekly',2,'2026-09-10','2026-09-17') ok`)).rows[0].ok,false);
+ await db.exec('set role authenticated');
+});
+console.log('PASS v1.2 recurring: replay-safe migration, daily occurrences, no-PIC template, due offsets, deduplication, RLS isolation, stop/history behavior, weekdays and interval weeks.');
+await db.close();
