@@ -1,4 +1,4 @@
-# Architecture — Focusdesk 1.3.0
+# Architecture — Focusdesk 1.4.0
 
 ## Stack dan struktur
 
@@ -27,7 +27,7 @@ Task save: Browser → Vercel session/Origin validation → Supabase RLS + trigg
 
 Telegram: callback/reply → webhook secret check → numeric user ID mapping → active profile/current ownership/message binding → service-only fd_tg_action → row lock, version, update_id → guarded status transaction → new outbox events → Telegram. No action resolves a task by fuzzy title.
 
-Pairing: authenticated browser requests random 192-bit code → SHA256 hash stored, expiry 10 minutes → user sends code → server validates private/group context and group admin → transactional redeem consumes code and connects identity. Telegram ID is unique across accounts; usernames are display/routing only.
+Pairing: authenticated browser requests random 192-bit code → SHA256 hash stored, expiry 10 minutes → user sends code → server validates private/group context and group admin → transactional redeem consumes code and connects identity. Telegram ID is unique across accounts; expected usernames are matched against the username observed from a trusted Telegram update. Numeric ID remains the paired identity; username alone never grants assignment access.
 
 Daily: Vercel cron → service-only fd_tg_daily → active owners' recurrences materialized → dated personal/group summary outbox → claim/process up to 20. Optional queue-only worker drains pending retries without generating a daily summary at other times.
 
@@ -40,9 +40,9 @@ All app tables use fd_ prefix. Full SQL is authoritative for fields, defaults, i
 | fd_profiles | id uuid PK, email text, display_name text, role text, is_active bool | auth.users FK; role admin/user; inactive by default |
 | fd_preferences | user_id uuid PK, capacity int, email_enabled bool | profile FK |
 | fd_tasks | id uuid PK, user_id uuid, status text, version int, scheduled/due date, completed_at timestamptz | Owner/profile, PIC, assignee/profile, recurrence, Telegram group FKs |
-| fd_pics | id uuid PK, owner_id uuid, name/email text, linked_user_id uuid? | Unique lower(email) per owner; linked account optional |
+| fd_pics | id uuid PK, owner_id uuid, name/email text, linked_user_id uuid?, telegram_username text? | Unique lower(email) per owner; linked account optional |
 | fd_recurrences | id uuid, owner_id uuid, template jsonb, pattern text, interval int, start/end date, generated_through date | Owner FK; interval 1–30; unique task recurrence_id/date |
-| fd_telegram_accounts | user_id uuid PK, telegram_id bigint UNIQUE, chat_id bigint | Profile FK; positive Telegram ID, private chat_id = Telegram ID |
+| fd_telegram_accounts | user_id uuid PK, telegram_id bigint UNIQUE, chat_id bigint, telegram_username text?, username_seen_at timestamptz? | Profile FK; positive Telegram ID, private chat_id = Telegram ID |
 | fd_telegram_groups | id uuid PK, owner_id uuid, chat_id bigint UNIQUE, title text, active bool | Negative chat ID; one owner per group |
 | fd_telegram_codes | hash text PK, user_id uuid, kind text, expires_at timestamptz | Hash length 64; personal/group; consumed on success |
 | fd_task_activity | id uuid, task_id uuid, actor_id uuid?, from/to_status text, cycle/version int, note text, created_at | Append-only to clients; task FK cascade; index task/time |
@@ -73,8 +73,19 @@ Task additions: requires_testing boolean default false; acceptance_criteria text
 
 Daily cleanup removes expired pairing codes, update/message mappings older than 30 days, and sent/skipped queue records older than 90 days. Older message buttons therefore stop working; obtain current cards. Pending/failed/uncertain records remain for inspection. Activity stays until task deletion; FK cascades are described in SQL. Export/backup before deletion when audit retention is required.
 
-Combined upgrade wraps 03 + 04 + 05 in one transaction. Optional 06 is not auto-included. Existing tasks default to testing=false and group=NULL; no retroactive notification blast for all old tasks. Existing ongoing series adopt testing/group fields only when new templates are created; per-occurrence edits do not change series template.
+Combined legacy upgrade wraps 03 + 04 + 05 + 07 in one transaction. For an existing v1.3 database use ONLY 07 (standalone Focusdesk_v1_3_to_v1_4.sql). Both paths are replay-safe; 07 leaves task rows/versions and pairing IDs untouched. Optional 06 is not auto-included. Existing tasks default to testing=false and group=NULL; no retroactive notification blast for all old tasks. Existing ongoing series adopt testing/group fields only when new templates are created; per-occurrence edits do not change series template.
 
 ## Coding rules
 
 Validate server inputs and SQL invariants; never trust UI button visibility. Parameterize SQL/RPC arguments; validate IDs before REST query composition. Do not log tokens/cookies/provider URLs. Avoid arbitrary user-ID impersonation RPC grants. Keep package lock and Node target consistent; version all release labels. Use additive reviewed migrations, explicit RLS/grants, regression tests and staging deployment. Do not change completed_at manually or rewrite activity history to fake completion. External writes/credentials must be configured by authorized operator.
+| public/js/sync.js | Pembacaan task berhalaman tanpa materialisasi pada polling; snapshot ID/version |
+| public/css/dashboard.css | Tokens visual, dashboard operasional dan responsive overrides |
+| supabase/07_telegram_sync_pic.sql | Username PIC/accounts, scoped verification RPCs, DM-only transactional action guard |
+
+## v1.4 synchronization and private actions
+
+Browser: 10-second active-tab polling → GET /api/tasks?sync=1&page=N → user-token RLS read → compare ID/version snapshot. Normal foreground loading still materializes recurrences. A read epoch and busy check discard stale background results across foreground writes/sign-out. Polling does not rerender settings/report forms. Dashboard/list/calendar views rerender on changes, preserving search focus and scroll. Open task drafts are retained; changed/deleted/access-revoked tasks show a stale banner or close. Save and workflow on stale forms are blocked until explicit reload; server optimistic version checks remain authoritative. Offline/hidden tabs pause and reconnect/focus resumes. No Supabase Realtime publication or new environment variables required. Polling adds API reads roughly six times per minute per active tab; use realtime or a delta endpoint if the workspace grows substantially.
+
+Telegram: answerCallbackQuery acknowledges receipt before database work. Then trusted from.id → active paired profile → observed username update → task/message binding + role/username verification → fd_tg_action transaction → success confirmation → outbox processing. Group cards are read-only; /tasks requests create only private outbox cards for the caller's accessible tasks. Legacy group actions are rejected by both webhook and SQL. DM roleFor distinguishes executor from reviewer; owner is executor only with no PIC or self-assignment. A username mismatch hides all action buttons for the affected account and rejects forged callbacks/replies. Telegram ephemeral messages are not used.
+
+fd_save_pic_v14 wraps existing owner/version-checked fd_save_pic atomically and stores normalized expected username. fd_pic_telegram_status exposes only the caller's contacts, without numeric IDs. fd_tg_pic_matches is service-only. Old contacts with no expected username retain numeric pairing behavior. Existing task assignee snapshots are intentionally not reassigned by editing a contact: owner saves task explicitly. Username observations update only from webhook-authenticated Telegram sender data.

@@ -1,4 +1,4 @@
-# Product requirements — Focusdesk 1.3
+# Product requirements — Focusdesk 1.4
 
 ## Pengguna dan tujuan
 
@@ -8,7 +8,7 @@ Tujuan: satu sumber tugas di Focusdesk, notifikasi Telegram yang kontekstual, pe
 
 ## Scope rilis
 
-- Pertahankan seluruh kemampuan v1.2 dan data lama.
+- Pertahankan seluruh kemampuan v1.3 dan data lama.
 - Pairing personal satu kali 10 menit; pairing grup oleh pengguna terhubung yang admin grup.
 - Kontak PIC linked memberi akses; email-only tetap kontak, bukan identitas Telegram.
 - Penugasan/rencana diedit di Focusdesk; status/progres di Focusdesk atau Telegram.
@@ -27,13 +27,16 @@ Tujuan: satu sumber tugas di Focusdesk, notifikasi Telegram yang kontekstual, pe
 6. Task tersimpan walau provider gagal; riwayat memperlihatkan pending/failed/uncertain.
 7. Notes internal/email tidak muncul di pesan grup.
 8. Recurring tidak memerlukan dashboard terbuka untuk menghasilkan occurrence.
-9. README membedakan upgrade/fresh SQL, env, webhook, pairing, kuota dan pengujian live.
+9. Grup tidak memuat action keyboard; DM PIC menerima Start work/Need Testing, DM reviewer menerima tindakan testing sesuai tahap.
+10. Expected username cocok dengan akun terpairing sebelum PIC bertindak; numeric ID tetap identitas.
+11. Dashboard aktif memperbarui status dari Telegram tanpa refresh manual; modal draf dilindungi.
+12. README membedakan upgrade/fresh SQL, env, webhook, pairing, kuota dan pengujian live.
 
 ## UX dan desain
 
 Pertahankan identitas Focusdesk: sidebar, latar netral, aksen hijau, modal task dan layout responsif yang sudah ada. Tidak ada redesign marketing. Settings menambah panel Telegram penuh dengan status, pairing, grup, tindakan admin, antrean. Task menambah field grup/testing/kriteria dan tindakan workflow. Status terbaru tampil di daftar dan board. Dialog history menampilkan waktu, actor ID, transisi, note dan cycle.
 
-Loading menggunakan indikator busy; error tidak dianggap success. Hasil pairing hanya tampil sekali untuk disalin; refresh memuat status koneksi. Tombol status tidak mengganti edit rencana. Checkbox task testing membuka dialog, bukan langsung menutup/reopen. Perubahan Telegram dimuat ulang ketika tab kembali fokus jika tidak ada modal terbuka.
+Loading menggunakan indikator busy; error tidak dianggap success. Hasil pairing hanya tampil sekali untuk disalin; refresh memuat status koneksi. Tombol status tidak mengganti edit rencana. Checkbox task testing membuka dialog, bukan langsung menutup/reopen. Perubahan Telegram dimuat setiap sekitar 10 detik saat tab aktif, termasuk modal terbuka. Draf tidak ditimpa; modal berubah menjadi stale, menampilkan status terbaru dan meminta reload eksplisit sebelum save. Tampilan utama memisahkan Review Desk, My Work, Team Progress, kapasitas dan jadwal. Identitas visual hijau dipertahankan dengan kontras teks dan ruang yang lebih jelas.
 
 ## Batas yang disengaja
 

@@ -4,11 +4,15 @@ export default handler(async(req,res)=>{
  if(req.method==='GET'){
   const page=Math.max(0,Math.min(1000,Number(req.query.page)||0));
   const pics=await sb('/rest/v1/fd_pics?select=*&order=name.asc,id.asc&limit=100&offset='+page*100,{token:ctx.token});
-  return reply(res,200,{pics,hasMore:pics.length===100});
+  const statuses=await sb('/rest/v1/rpc/fd_pic_telegram_status',{method:'POST',token:ctx.token,data:{}});
+  const byId=new Map(statuses.map(s=>[s.pic_id,s]));
+  return reply(res,200,{pics:pics.map(p=>({...p,...byId.get(p.id)})),hasMore:pics.length===100});
  }
  if(req.method==='POST'){
   const b=body(req);if(typeof b.name!=='string'||!b.name.trim()||b.name.length>80||typeof b.link_account!=='boolean'||typeof b.is_active!=='boolean')throw new HttpError(400,'Data PIC tidak valid');
-  const pic=await sb('/rest/v1/rpc/fd_save_pic',{method:'POST',token:ctx.token,data:{p_id:uuid(b.id),p_name:b.name,p_email:email(b.email),p_link:b.link_account,p_active:b.is_active,p_version:b.version||null}});
+  const handle=String(b.telegram_username||'').trim().replace(/^@/,'').toLowerCase();
+  if(handle&&!/^[a-z][a-z0-9_]{4,31}$/.test(handle))throw new HttpError(400,'Username Telegram harus 5–32 karakter huruf/angka/underscore.');
+  const pic=await sb('/rest/v1/rpc/fd_save_pic_v14',{method:'POST',token:ctx.token,data:{p_id:uuid(b.id),p_name:b.name,p_email:email(b.email),p_link:b.link_account,p_active:b.is_active,p_version:b.version||null,p_telegram_username:handle||null}});
   return reply(res,200,{pic});
  }throw new HttpError(405,'Method not allowed');
 });

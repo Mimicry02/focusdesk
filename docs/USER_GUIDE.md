@@ -1,4 +1,20 @@
-# Pemakaian harian — Focusdesk 1.3
+# Pemakaian harian — Focusdesk 1.4
+
+## Baru di v1.4
+
+**PIC contacts:** isi Username Telegram PIC, misalnya `@raka_dev`, dan hubungkan akun aktif dengan email yang sama. Programmer melakukan Connect personal dari akun Focusdesk miliknya. Yang sudah pairing cukup mengirim `/start` atau `/tasks` agar bot membaca username terbaru. Kembali ke PIC contacts untuk melihat status username cocok/belum pairing/tidak cocok.
+
+Username adalah pengecekan tambahan, bukan identitas login. Numeric Telegram ID hasil pairing tetap menjadi identitas. Mismatch memblokir tindakan. Kontak lama tanpa username tetap memakai pairing lama. Edit koneksi kontak tidak otomatis mengganti assignee task lama; buka dan Save task untuk memperbaruinya.
+
+**Grup:** kartu baru tidak memiliki tombol tindakan. PIC menerima Start work/Need Testing di DM; pemilik menerima tombol review di DM pada tahap testing. `/tasks` dari grup juga mengirim kartu pribadi sesuai akses pemanggil. Tombol lama v1.3 mungkin masih terlihat; server menolaknya dan mencoba menghapus keyboard ketika diklik.
+
+**Sinkronisasi:** dashboard mengambil perubahan sekitar setiap 10 detik selama tab aktif, juga ketika modal terbuka. Indikator Sinkron menunjukkan waktu pembacaan sukses terakhir. Tab tersembunyi/offline berhenti polling dan mengambil ulang saat aktif/online. Tunggu konfirmasi bot “Status tersimpan”; klik saja belum membuktikan perubahan berhasil.
+
+Jika task berubah saat modal terbuka, banner menampilkan status terbaru dan tombol penyimpanan/tindakan dikunci. Draf tetap berada di layar. Salin teks yang perlu dipertahankan, lalu pilih Muat detail terbaru dan setujui penggantian draf. Konflik versi di server tetap melindungi data.
+
+**Dashboard:** kartu Tugas hari ini menghitung pekerjaan pribadi pada tanggal terpilih; In progress mencakup tugas saya/PIC; Menunggu review mencakup task milik Anda yang Ready for Testing/Testing; overdue memakai hari ini WIB. Review Desk membuka task yang perlu diuji. Kapasitas hanya menghitung estimasi pribadi, bukan delegasi. Laporan bulanan tetap snapshot: Generate ulang untuk data terbaru.
+
+## Rutinitas
 
 1. Pagi: baca briefing Telegram. Ketik /tasks untuk kartu tugas hari ini/tertunda. Atur task baru dan tanggal di Focusdesk.
 2. Untuk penugasan: PIC contacts → akun programmer linked → task pilih PIC. Pilih grup bila informasi task boleh dibaca seluruh grup.

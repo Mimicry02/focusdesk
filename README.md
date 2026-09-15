@@ -1,13 +1,14 @@
-# Focusdesk v1.3.0 — Telegram-first
+# Focusdesk v1.4.0 — Dashboard, PIC & Telegram sync
 
-Buat/assign tugas di Focusdesk; terima briefing dan perbarui progres/testing lewat bot Telegram. Stack tetap Supabase + Vercel. Paket berisi source dan migrasi, **belum terhubung ke akun atau bot Anda**. Tidak ada token/password asli di ZIP.
+Buat/assign tugas di Focusdesk; terima briefing dan perbarui progres/testing lewat bot Telegram. Stack tetap Supabase + Vercel. Paket ini memperbarui source dan SQL aplikasi Anda. Koneksi Supabase/Telegram yang sudah berjalan dipertahankan melalui environment variables dan data pairing yang sama; paket belum diterapkan ke production Anda. Tidak ada token/password asli di ZIP.
 
 ## 1. Pilih SQL yang benar
 
 | Kondisi | File yang dijalankan |
 | --- | --- |
-| Sudah menggunakan Focusdesk v1.0 / v1.1 / v1.2 | `Focusdesk_Upgrade_to_v1_3.sql` saja |
-| Database baru, belum ada Focusdesk | `Focusdesk_Supabase_v1_3.sql`, lalu bootstrap admin |
+| Sudah menggunakan Focusdesk v1.3 dan SQL Telegram sudah terpasang | `Focusdesk_v1_3_to_v1_4.sql` saja (direkomendasikan untuk Anda) |
+| Sudah menggunakan Focusdesk v1.0 / v1.1 / v1.2 | `Focusdesk_Upgrade_to_v1_4.sql` saja |
+| Database baru, belum ada Focusdesk | `Focusdesk_Supabase_v1_4.sql`, lalu bootstrap admin |
 | Ingin antrean diproses tiap menit | Opsional `supabase/06_optional_queue_worker.sql`, setelah bagian 9 |
 
 **Backup database terlebih dahulu.** Jangan jalankan instalasi baru pada database lama. SQL upgrade digabung dalam satu transaksi dan dapat dijalankan ulang. Tidak ada DROP TABLE, reset pengguna, atau penghapusan task lama; beberapa fungsi, trigger, policy, dan constraint Focusdesk diganti untuk mendukung alur baru.
@@ -16,23 +17,46 @@ Buat/assign tugas di Focusdesk; terima briefing dan perbarui progres/testing lew
 
 1. Simpan source/ZIP lama dan backup Supabase. Catat jumlah task serta beberapa ID untuk pembanding. Coba di staging dahulu bila memungkinkan.
 2. Hentikan sementara aktivitas edit tim.
-3. Supabase → SQL Editor → New query → tempel seluruh `Focusdesk_Upgrade_to_v1_3.sql` → Run. Pastikan sukses.
-4. Ekstrak ZIP v1.3. Folder yang berisi `package.json` adalah root project.
-5. Perbarui repository deployment Anda dengan source v1.3. Jangan menimpa file rahasia lokal.
-6. Tambahkan env di bagian 3 → redeploy production → login → Settings → Register webhook.
-7. Pastikan label v1.3, task lama, PIC, dan laporan masih terlihat. Jalankan checklist bagian 10.
+3. Supabase → SQL Editor → New query → tempel seluruh `Focusdesk_v1_3_to_v1_4.sql` (jika sudah v1.3), atau `Focusdesk_Upgrade_to_v1_4.sql` (versi lebih lama) → Run. Pastikan sukses.
+4. Ekstrak ZIP v1.4. Folder yang berisi `package.json` adalah root project.
+5. Perbarui repository deployment Anda dengan source v1.4. Jangan menimpa file rahasia lokal.
+6. Pertahankan env lama → deploy commit terbaru ke production → login. Tidak ada env baru wajib untuk v1.4. Jika domain/token/webhook tidak berubah, tidak perlu pairing atau Register webhook ulang. Check webhook cukup untuk memeriksa URL.
+7. Pastikan label v1.4, task lama, PIC, dan laporan masih terlihat. Jalankan checklist bagian 10.
 
 Sesudah memakai status testing, jangan rollback aplikasi saja ke v1.2 karena versi lama tidak mengenali status baru. Pemulihan: perbaikan maju, atau restore backup database + source lama dalam maintenance window. Restore backup tidak memuat perubahan sesudah waktu backup.
 
 ### Instalasi baru
 
-1. Buat project Supabase, jalankan `Focusdesk_Supabase_v1_3.sql`.
+1. Buat project Supabase, jalankan `Focusdesk_Supabase_v1_4.sql`.
 2. Authentication → Users → Add user: buat akun Anda dengan email/password yang benar dan selesaikan konfirmasi sesuai pengaturan Supabase.
 3. Isi placeholder email di `supabase/02_bootstrap_admin.sql`, jalankan untuk admin pertama. **Bukan langkah upgrade.**
 4. Authentication → URL Configuration: Site URL = domain production Vercel. Tambahkan domain yang sama pada redirect URLs; hindari wildcard domain sembarang.
 5. Deploy, login, lalu undang programmer melalui User management. Akun harus aktif untuk mengakses task/pairing Telegram.
 
-## 2. Isi update v1.3
+## 2. Perbaikan khusus v1.4
+
+- Dashboard mengambil status terbaru setiap sekitar **10 detik selama tab aktif**, serta saat tab kembali aktif/koneksi kembali online. Tidak perlu refresh manual untuk Start work. Ini polling, bukan realtime push; latensi jaringan tetap berlaku.
+- Indikator “Sinkron HH.MM.SS” menunjukkan waktu pengambilan sukses terakhir. Jika gagal, terlihat “Sinkronisasi tertunda”; aplikasi mencoba kembali. Polling tidak membuat occurrence berulang setiap 10 detik.
+- **Grup menerima kartu informasi tanpa tombol tindakan.** Tombol pengerjaan ada di chat pribadi PIC, tombol review di chat pribadi pemilik/reviewer. `/tasks` dari grup mengirim kartu yang boleh diakses pemanggil ke chat pribadinya.
+- Kolom **Username Telegram PIC** di PIC contacts, disertai status belum pairing / username tidak cocok / terverifikasi. Username bukan pengganti login dan pairing.
+- Konfirmasi “Status tersimpan” dikirim setelah perubahan Supabase berhasil. Indikator tombol Telegram direspons lebih awal saat pemeriksaan berlangsung.
+- Formulir terbuka tidak ditimpa oleh perubahan Telegram: banner menampilkan status terbaru, penyimpanan/tindakan versi lama dikunci, dan tombol “Muat detail terbaru” meminta persetujuan untuk mengganti draf di layar.
+- Dashboard baru: tugas pribadi, In progress, review desk, overdue, kapasitas pribadi, jadwal dan progres PIC. Klik angka untuk membuka filter terkait. Pekerjaan delegasi tidak memakan kapasitas pribadi.
+- Kesalahan izin suatu tindakan (403) tidak otomatis mengeluarkan pengguna dari sesi; sesi kedaluwarsa (401) tetap meminta login.
+
+### Setelah upgrade: PIC yang sudah ada
+
+1. PIC contacts → Edit → isi `@username_programmer`, centang koneksi akun aktif → Save PIC.
+2. Programmer yang sudah pairing cukup mengirim `/start` atau `/tasks` di chat pribadi bot agar username aktual dibaca. Tidak perlu membuat ulang bot.
+3. Kembali ke PIC contacts (atau refresh) dan pastikan **Username cocok · siap menerima tindakan**. Jika tidak cocok, pastikan email akun, username, dan akun Telegram yang dipakai benar.
+4. Task lama tetap memakai assignee lama. Jika Anda baru menghubungkan akun PIC, buka task → pilih PIC → Save task agar assignment task diperbarui.
+5. Kartu lama di grup mungkin masih menampilkan tombol lama. Server menolaknya dan menghapus tombol pada kartu tersebut saat diklik; ketik `/tasks` untuk kartu DM terbaru. Tidak ada penghapusan massal pesan grup.
+
+Kontak lama tanpa username tetap memakai numeric ID hasil pairing untuk kompatibilitas. Mengisi username menambahkan pengecekan kecocokan; username yang berubah memerlukan pembaruan kontak dan `/start` dari PIC. Penggantian username oleh orang lain tidak memindahkan assignment maupun pairing.
+
+Rilis ini memilih DM untuk tindakan dan pesan bersama untuk grup. Tidak mengimplementasikan pesan ephemeral Telegram.
+
+### Kemampuan yang dipertahankan
 
 - Pairing personal dengan kode sekali pakai 10 menit; pairing grup dengan pemeriksaan admin grup.
 - Notifikasi task baru/perubahan untuk pemilik dan PIC yang memasangkan Telegram. Grup hanya menerima task yang secara eksplisit dibagikan ke grup itu.
@@ -124,7 +148,7 @@ Tidak perlu menaruh token dalam URL browser/curl. Register webhook di aplikasi m
 2. Undang bot ke grup. Jadikan bot admin dengan hak minimum yang dibutuhkan agar pemeriksaan getChatMember andal; tidak perlu memberikan hak mengangkat admin atau menghapus pesan.
 3. Anda juga harus admin/owner grup. Kirim sebagai akun pribadi, bukan anonymous admin atau channel.
 4. Focusdesk → **Connect group** → kirim `/connect@USERNAME_BOT KODE` ke grup dari akun Telegram Anda yang sudah dipasangkan.
-5. Refresh Focusdesk. Satu grup hanya dapat terhubung ke satu pemilik Focusdesk pada v1.3.
+5. Refresh Focusdesk. Satu grup hanya dapat terhubung ke satu pemilik Focusdesk pada v1.4.
 6. Saat membuat/mengedit task, pilih **Bagikan ke grup Telegram**. Kosong = tidak dibagikan ke grup.
 
 Privacy mode boleh tetap aktif. Bot memproses command, callback, dan reply task; obrolan biasa diabaikan/tidak disimpan. Bot admin dapat menerima pesan lebih luas daripada privacy-mode bot biasa. Di grup dengan beberapa bot, gunakan `/tasks@USERNAME_BOT`.
@@ -134,23 +158,23 @@ Privacy mode boleh tetap aktif. Bot memproses command, callback, dan reply task;
 ## 7. Assign task dan testing
 
 1. Admin mengundang programmer melalui User management. Programmer menyelesaikan login dan aktif.
-2. Buat PIC contact dengan email programmer, centang **Hubungkan ke akun aktif dengan email yang sama**.
+2. Buat PIC contact dengan email programmer dan username Telegram-nya, centang **Hubungkan ke akun aktif dengan email yang sama**.
 3. Programmer login dan pairing personal Telegram sendiri. Kontak Email only tidak dapat mengubah task melalui bot.
 4. Buat task → pilih PIC → aktifkan **Wajib testing oleh saya** bila perlu → isi kriteria → pilih grup opsional → Save.
 5. Penyimpanan task dan antrean notifikasi terjadi bersama. Server mencoba mengirim segera; kegagalan Telegram tidak membatalkan task.
 
 | Dari | Pelaku / tombol | Menjadi |
 | --- | --- | --- |
-| Backlog / To do / Rework | PIC atau pemilik: Start work | In progress |
-| In progress | PIC atau pemilik: Need Testing | Ready for Testing |
+| Backlog / To do / Rework | PIC pengerjaan: Start work | In progress |
+| In progress | PIC pengerjaan: Need Testing | Ready for Testing |
 | Ready for Testing | Pemilik: Start testing | Testing |
 | Testing | Pemilik: Pass & close | Done |
 | Ready for Testing / Testing | Pemilik: Return / Fail & return + alasan | Rework |
 | Done dengan testing | Pemilik: Reopen with reason | Rework |
 
-**Reviewer v1.3 selalu pemilik task**, belum ada tester terpisah. Test cycle bertambah setiap kali masuk Ready for Testing. PIC tetap sama ketika Rework; penggantian PIC dilakukan di Focusdesk. PIC/kriteria tidak boleh diganti saat menunggu/dalam testing: kembalikan task dahulu.
+**Reviewer selalu pemilik task**, belum ada tester terpisah. Test cycle bertambah setiap kali masuk Ready for Testing. PIC tetap sama ketika Rework; penggantian PIC dilakukan di Focusdesk. PIC/kriteria tidak boleh diganti saat menunggu/dalam testing: kembalikan task dahulu.
 
-Task tanpa testing bisa ditutup langsung. Task dengan testing tidak bisa melewati tahapan via checkbox, API, atau REST langsung. Testing yang sudah aktif tidak dapat dimatikan untuk melewati review.
+Task tanpa testing bisa ditutup langsung oleh PIC pengerjaan. Jika tidak ada PIC, pemilik bertindak sebagai pelaksana. Pemilik tetap dapat mengelola rencana/status task biasa di web; tombol pengerjaan Telegram ditujukan kepada pelaksana. Task dengan testing tidak bisa melewati tahapan via checkbox, API, atau REST langsung. Testing yang sudah aktif tidak dapat dimatikan untuk melewati review.
 
 Tombol Fail & return meminta reply, misalnya `fail: Pencarian GEE Platform error saat keyword kosong`. Status berubah setelah alasan valid; PIC yang Telegram-nya terhubung ditag menggunakan numeric user ID.
 
@@ -165,9 +189,9 @@ fail: alasan pengembalian
 progress: catatan pengerjaan
 ```
 
-Kalimat bebas “Done fixing ya tasks GEE Platform” tidak ditafsirkan otomatis. Gunakan tombol atau reply `done` pada kartu yang tepat. Versi pesan harus sama dengan task; tombol lama ditolak. `/tasks` menyediakan maksimal 10 kartu tugas hari ini/tertunda sesuai akses. Task masa depan dibuka di Focusdesk. Tombol grup dapat terlihat oleh semua orang, tetapi hak aksi diperiksa server.
+Kalimat bebas “Done fixing ya tasks GEE Platform” tidak ditafsirkan otomatis. Gunakan tombol atau reply `done` pada kartu yang tepat. Versi pesan harus sama dengan task; tombol lama ditolak. `/tasks` menyediakan maksimal 10 kartu tugas hari ini/tertunda sesuai akses. Task masa depan dibuka di Focusdesk. Kartu grup v1.4 tidak memuat tombol tindakan. Hanya DM pengguna yang berhak menerima tombol sesuai tahap/perannya; server tetap memeriksa izin, versi, dan binding pesan pada setiap aksi.
 
-Dashboard refresh saat tab memperoleh fokus jika tidak ada modal edit; tersedia refresh manual. Tidak ada realtime push ketika modal sedang diedit. Konflik versi meminta muat ulang, bukan menimpa perubahan orang lain.
+Dashboard menyinkronkan setiap sekitar 10 detik saat tab aktif, termasuk ketika modal terbuka. Isi draf modal dipertahankan dan ditandai stale bila task berubah. Muat detail terbaru sebelum melakukan tindakan lanjutan. Tab tersembunyi berhenti polling lalu mengambil ulang saat aktif; reconnect juga memicu sinkronisasi. Laporan bulanan adalah snapshot dan perlu Generate ulang untuk isi terbaru.
 
 ## 8. Recurring dan laporan
 
@@ -177,7 +201,7 @@ Horizon normal 14 hari; batas internal 31 hari; catch-up maksimal 31 hari ke bel
 
 PIC nonaktif menjeda generasi seri terkait. Grup yang diputus tidak dipakai occurrence baru. Task lama tidak otomatis dipindahkan saat kontak PIC diedit; simpan ulang task dengan PIC yang tepat.
 
-Monthly reports → pilih bulan/dasar tanggal/lingkup/kategori/PIC → Generate → Excel / CSV / Print PDF. Status/PIC adalah kondisi **saat export**, bukan snapshot akhir bulan; durasi adalah estimasi, bukan timesheet. Kolom v1.3: requires testing, cycle, criteria. Activity history menampilkan 200 kejadian terbaru per task; data lebih lama tetap disimpan selama task tidak dihapus. Histori sebelum v1.3 tidak direkonstruksi. Hapus task juga menghapus riwayatnya; simpan export sebagai arsip.
+Monthly reports → pilih bulan/dasar tanggal/lingkup/kategori/PIC → Generate → Excel / CSV / Print PDF. Status/PIC adalah kondisi **saat export**, bukan snapshot akhir bulan; durasi adalah estimasi, bukan timesheet. Kolom sejak v1.3: requires testing, cycle, criteria. Activity history menampilkan 200 kejadian terbaru per task; data lebih lama tetap disimpan selama task tidak dihapus. Histori sebelum v1.3 tidak direkonstruksi. Hapus task juga menghapus riwayatnya; simpan export sebagai arsip.
 
 ## 9. Jadwal dan worker antrean
 
@@ -213,7 +237,7 @@ Alternatif Vercel Pro: cron per menit ke `/api/telegram-cron?mode=queue`. Jangan
 ## 10. Checklist pengujian akun Anda
 
 - [ ] Migrasi sukses; task/PIC/user lama dan laporan tetap tersedia.
-- [ ] Label aplikasi v1.3, package.json 1.3.0.
+- [ ] Label aplikasi v1.4, package.json 1.4.0.
 - [ ] Webhook production benar, tidak terkena redirect/protection.
 - [ ] Pemilik dan programmer pairing akun masing-masing; kode lama ditolak.
 - [ ] Grup dipasangkan oleh admin yang tepat.
@@ -221,7 +245,10 @@ Alternatif Vercel Pro: cron per menit ke `/api/telegram-cron?mode=queue`. Jangan
 - [ ] PIC → Start work → Need Testing; PIC tidak bisa meluluskan testing.
 - [ ] Pemilik → Start testing → Fail + alasan → Rework dan tag PIC.
 - [ ] Perbaikan → Need Testing lagi → cycle naik → pemilik Pass → Done.
-- [ ] Orang lain/tombol versi lama ditolak.
+- [ ] Orang lain/tombol versi lama ditolak; grup tidak punya tombol tindakan baru.
+- [ ] Biarkan tab dashboard aktif → PIC klik Start work → dalam sekitar 10 detik status menjadi In progress.
+- [ ] Modal dengan draf terbuka → task berubah dari Telegram → draf tetap ada, banner muncul, Save terkunci.
+- [ ] Username PIC tidak cocok → tombol pengerjaan tidak diberikan; username yang cocok dapat bertindak.
 - [ ] Kegagalan kirim tidak membatalkan task; antrean menampilkan hasil.
 - [ ] Briefing tanggal sama tidak diulang; cron produksi berjalan keesokan pagi.
 - [ ] Occurrence berikutnya dibuat tanpa perlu membuka dashboard.
@@ -232,7 +259,8 @@ Alternatif Vercel Pro: cron per menit ke `/api/telegram-cron?mode=queue`. Jangan
 
 - **Origin tidak diizinkan:** APP_URL harus sama dengan origin yang dibuka; pakai satu domain canonical, redeploy.
 - **Tabel/kolom/RPC tidak ditemukan:** jalankan upgrade lengkap pada project SUPABASE_URL yang benar; periksa schema cache bila perlu.
-- **PIC tidak bisa klik:** akun aktif, PIC linked, task tersimpan dengan PIC itu, pairing dari akun programmer sendiri.
+- **PIC tidak bisa klik:** akun aktif, PIC linked, task tersimpan dengan PIC itu, pairing dari akun programmer sendiri, dan username cocok. Kirim `/start` untuk memperbarui username yang dibaca bot. Cari tombol di DM, bukan kartu grup.
+- **Start work tidak terlihat di web:** cek konfirmasi “Status tersimpan”, lalu indikator Sinkron pada tab aktif. Jika tertunda, periksa jaringan/session dan Vercel logs. Bila Supabase menunjukkan In progress tetapi UI belum, pastikan source v1.4 terdeploy dan lakukan hard refresh sekali. Bila bot tidak mengonfirmasi, periksa error di chat, versi kartu dan hasil migrasi; jangan menganggap klik sebagai bukti tersimpan.
 - **Bot tidak menjawab grup:** periksa webhook, admin, perintah @username, dan jangan kirim sebagai anonymous admin/channel.
 - **/tasks kosong:** task harus aktif dan terjadwal/deadline hari ini/tertunda, grup cocok, akun punya akses.
 - **Email invite/reset gagal:** periksa Supabase Auth SMTP/rate limit, bukan token Telegram.
@@ -248,7 +276,7 @@ Alternatif Vercel Pro: cron per menit ke `/api/telegram-cron?mode=queue`. Jangan
 - `docs/USER_GUIDE.md`: pemakaian harian.
 - `docs/TEST_RESULTS.md`: pengujian lokal dan batas verifikasi live.
 
-Dokumentasi primer diperiksa 11 September 2026 (menu/kuota layanan dapat berubah):
+Referensi dokumentasi primer (panduan awal 11 September; Telegram API diperiksa kembali 13 September 2026) (menu/kuota layanan dapat berubah):
 
 - [Telegram Bot API](https://core.telegram.org/bots/api)
 - [Telegram Bots FAQ](https://core.telegram.org/bots/faq)
