@@ -1,39 +1,30 @@
-# Focusdesk v1.4.0 — Dashboard, PIC & Telegram sync
+# Focusdesk v1.5.0 — Briefing Telegram pagi & sore
 
-Buat/assign tugas di Focusdesk; terima briefing dan perbarui progres/testing lewat bot Telegram. Stack tetap Supabase + Vercel. Paket ini memperbarui source dan SQL aplikasi Anda. Koneksi Supabase/Telegram yang sudah berjalan dipertahankan melalui environment variables dan data pairing yang sama; paket belum diterapkan ke production Anda. Tidak ada token/password asli di ZIP.
+Rilis source aplikasi Supabase + Vercel. Tambahan utama: ringkasan grup **09.00 WIB**, kartu tindakan pribadi PIC/reviewer, serta evaluasi **17.30 WIB** untuk tugas tertunda dan agenda besok. Data, user, PIC, dan pairing lama dipertahankan. Paket ini belum diterapkan ke production Anda.
 
-## 1. Pilih SQL yang benar
+## 1. Upgrade dan aktivasi
 
-| Kondisi | File yang dijalankan |
+| Kondisi database | SQL yang dijalankan |
 | --- | --- |
-| Sudah menggunakan Focusdesk v1.3 dan SQL Telegram sudah terpasang | `Focusdesk_v1_3_to_v1_4.sql` saja (direkomendasikan untuk Anda) |
-| Sudah menggunakan Focusdesk v1.0 / v1.1 / v1.2 | `Focusdesk_Upgrade_to_v1_4.sql` saja |
-| Database baru, belum ada Focusdesk | `Focusdesk_Supabase_v1_4.sql`, lalu bootstrap admin |
-| Ingin antrean diproses tiap menit | Opsional `supabase/06_optional_queue_worker.sql`, setelah bagian 9 |
+| Sudah v1.4 | `Focusdesk_v1_4_to_v1_5.sql` |
+| Masih v1.3 | `Focusdesk_v1_3_to_v1_5.sql` |
+| Masih v1.0/v1.1/v1.2 | `Focusdesk_Upgrade_to_v1_5.sql` |
+| Database baru | `Focusdesk_Supabase_v1_5.sql`, lalu bootstrap admin |
+| Setelah source v1.5 live dan Vault siap | `Focusdesk_Activate_Scheduler_v1_5.sql` |
 
-**Backup database terlebih dahulu.** Jangan jalankan instalasi baru pada database lama. SQL upgrade digabung dalam satu transaksi dan dapat dijalankan ulang. Tidak ada DROP TABLE, reset pengguna, atau penghapusan task lama; beberapa fungsi, trigger, policy, dan constraint Focusdesk diganti untuk mendukung alur baru.
+1. Backup database/source; pilih **satu** SQL upgrade sesuai versi. Jalankan seluruh isinya di SQL Editor.
+2. Ekstrak ZIP, perbarui repository dari root yang berisi package.json, lalu deploy commit terbaru ke Vercel. Pertahankan environment variables lama; tidak ada env baru wajib.
+3. Pastikan `CRON_SECRET` >=32 karakter, token bot, dan `APP_URL` production benar. Pairing ulang tidak diperlukan jika akun/domain/bot tetap sama.
+4. Ikuti **[panduan scheduler lengkap](docs/SCHEDULER_GUIDE.md)**: buat/periksa Vault `focusdesk_app_url` dan `focusdesk_cron_secret`, lalu jalankan SQL aktivasi setelah deployment sukses.
+5. Periksa Settings → Telegram → Panggilan terakhir, riwayat pengiriman, serta job Supabase. Pastikan grup terhubung, task memilih grup, dan PIC linked + pairing.
 
-### Upgrade aplikasi berjalan
+Vercel Hobby tidak menjamin cron pada menit yang tepat. Pemicu setiap menit melalui Supabase Cron merupakan jalur yang disiapkan untuk kebutuhan Anda, dengan penggunaan sekitar 43.200 request/30 hari dan latensi pengiriman tetap mungkin. Dua cron Vercel harian menjadi fallback dan berbagi dedup database.
 
-1. Simpan source/ZIP lama dan backup Supabase. Catat jumlah task serta beberapa ID untuk pembanding. Coba di staging dahulu bila memungkinkan.
-2. Hentikan sementara aktivitas edit tim.
-3. Supabase → SQL Editor → New query → tempel seluruh `Focusdesk_v1_3_to_v1_4.sql` (jika sudah v1.3), atau `Focusdesk_Upgrade_to_v1_4.sql` (versi lebih lama) → Run. Pastikan sukses.
-4. Ekstrak ZIP v1.4. Folder yang berisi `package.json` adalah root project.
-5. Perbarui repository deployment Anda dengan source v1.4. Jangan menimpa file rahasia lokal.
-6. Pertahankan env lama → deploy commit terbaru ke production → login. Tidak ada env baru wajib untuk v1.4. Jika domain/token/webhook tidak berubah, tidak perlu pairing atau Register webhook ulang. Check webhook cukup untuk memeriksa URL.
-7. Pastikan label v1.4, task lama, PIC, dan laporan masih terlihat. Jalankan checklist bagian 10.
+SQL upgrade additive/replay-safe; tidak mereset task/user/pairing. Jangan memakai fresh install pada database lama. Jangan rollback source saja ketika skema/alur baru sudah digunakan; simpan backup untuk pemulihan terkoordinasi.
 
-Sesudah memakai status testing, jangan rollback aplikasi saja ke v1.2 karena versi lama tidak mengenali status baru. Pemulihan: perbaikan maju, atau restore backup database + source lama dalam maintenance window. Restore backup tidak memuat perubahan sesudah waktu backup.
+Instalasi baru: jalankan full SQL, buat user Anda melalui Supabase Authentication, sesuaikan email pada `supabase/02_bootstrap_admin.sql`, lalu jalankan untuk admin pertama. Atur Site URL/redirect sesuai domain Vercel. Detail env/BotFather/PIC/kalender/laporan ada di bagian berikut.
 
-### Instalasi baru
-
-1. Buat project Supabase, jalankan `Focusdesk_Supabase_v1_4.sql`.
-2. Authentication → Users → Add user: buat akun Anda dengan email/password yang benar dan selesaikan konfirmasi sesuai pengaturan Supabase.
-3. Isi placeholder email di `supabase/02_bootstrap_admin.sql`, jalankan untuk admin pertama. **Bukan langkah upgrade.**
-4. Authentication → URL Configuration: Site URL = domain production Vercel. Tambahkan domain yang sama pada redirect URLs; hindari wildcard domain sembarang.
-5. Deploy, login, lalu undang programmer melalui User management. Akun harus aktif untuk mengakses task/pairing Telegram.
-
-## 2. Perbaikan khusus v1.4
+## 2. Fitur yang dipertahankan dari v1.4
 
 - Dashboard mengambil status terbaru setiap sekitar **10 detik selama tab aktif**, serta saat tab kembali aktif/koneksi kembali online. Tidak perlu refresh manual untuk Start work. Ini polling, bukan realtime push; latensi jaringan tetap berlaku.
 - Indikator “Sinkron HH.MM.SS” menunjukkan waktu pengambilan sukses terakhir. Jika gagal, terlihat “Sinkronisasi tertunda”; aplikasi mencoba kembali. Polling tidak membuat occurrence berulang setiap 10 detik.
@@ -203,41 +194,24 @@ PIC nonaktif menjeda generasi seri terkait. Grup yang diputus tidak dipakai occu
 
 Monthly reports → pilih bulan/dasar tanggal/lingkup/kategori/PIC → Generate → Excel / CSV / Print PDF. Status/PIC adalah kondisi **saat export**, bukan snapshot akhir bulan; durasi adalah estimasi, bukan timesheet. Kolom sejak v1.3: requires testing, cycle, criteria. Activity history menampilkan 200 kejadian terbaru per task; data lebih lama tetap disimpan selama task tidak dihapus. Histori sebelum v1.3 tidak direkonstruksi. Hapus task juga menghapus riwayatnya; simpan export sebagai arsip.
 
-## 9. Jadwal dan worker antrean
+## 9. Scheduler Telegram v1.5
 
-Default cron `0 1 * * *` UTC = target 08.00 WIB. Pada **Vercel Hobby**, eksekusi dapat terjadi 08.00–08.59 WIB, bukan alarm menit-presisi. Endpoint mematerialisasi recurring tasks dan mengantrekan ringkasan personal/grup. Email memakai cron terpisah dan tetap opsional.
+Target **09.00 WIB**: ringkasan grup dan kartu DM sesuai PIC/reviewer. Target **17.30 WIB**: tugas tertunda, belum selesai hari ini, dan agenda besok ke grup. Setiap hari termasuk akhir pekan; hanya task yang dibagikan ke grup yang dimuat.
 
-Ringkasan maksimal 15 task, query dibatasi 51 untuk indikator 50+. Task aktif dengan jadwal/deadline hari ini atau lebih awal masuk ringkasan. Task tanpa tanggal tidak masuk briefing tetapi tetap ada di dashboard.
+**Aktivasi wajib untuk pemicu per menit:** ikuti [docs/SCHEDULER_GUIDE.md](docs/SCHEDULER_GUIDE.md). Buat dua Vault secrets, deploy source v1.5, lalu jalankan `Focusdesk_Activate_Scheduler_v1_5.sql`. Script ini menggantikan worker lama 06. Menjalankan SQL upgrade saja belum mengaktifkan Supabase Cron.
 
-Worker: maksimal 20 pesan per cron, 4 setelah save, 12 lewat Process pending queue. Cocok personal/tim kecil. Jika antrean bertambah, aktifkan worker per menit agar tidak menunggu cron harian. Riwayat UI menampilkan 20 pengiriman terbaru, bukan ukuran seluruh antrean.
+Vercel menyertakan dua fallback cron harian, dengan batas presisi per jam pada Hobby. Supabase Cron dipilih untuk pemicu setiap menit. Pengiriman tetap dipengaruhi antrean/jaringan, bukan jaminan tepat detik. Email opsional tetap mempunyai jadwal 08.00 WIB yang terpisah.
 
-| Status | Arti / tindakan |
-| --- | --- |
-| pending | Belum dicoba; Process pending queue atau tunggu worker |
-| sending | Sedang dicoba; lease yang kedaluwarsa menjadi uncertain |
-| sent | Telegram menerima; bukan bukti dibaca |
-| failed | Retry/backoff minimal 60 detik, maksimum 5 percobaan |
-| skipped | Target nonaktif/putus/akses berubah, ringkasan kedaluwarsa, atau penolakan permanen; perbaiki konfigurasi lalu minta kartu baru |
-| uncertain | Timeout/crash setelah kemungkinan terkirim; tidak retry otomatis. Periksa chat lalu gunakan /tasks |
+Ringkasan baru menghitung seluruh task, dengan maksimum 5 contoh per bagian. Kartu pagi dikirim bertahap melalui worker (maksimum 20 pesan per panggilan). Batch per tanggal/slot dilindungi kunci unik; task yang sudah Done/izin berubah tidak dikirimi kartu terjadwal. Ringkasan grup didahulukan sebelum kartu terkait; backlog diproses pada tick berikutnya.
 
-Telegram sendMessage tidak menyediakan kunci idempotensi pengiriman; tidak ada janji exactly-once delivery saat gangguan jaringan. Perubahan status memakai update_id dan version dalam transaksi. Pengiriman memakai kebijakan konservatif untuk mengurangi duplikasi.
+Status antrean: pending → sending → sent, atau failed (retry/backoff, maksimum 5 percobaan), skipped (tidak relevan/expired/target terputus), uncertain (kemungkinan sudah terkirim; jangan retry massal). Sent berarti diterima API, bukan dibaca. Tidak ada jaminan exactly-once dari Telegram.
 
-### Opsional: Supabase Cron setiap menit
-
-Ini memakai kuota layanan (~43.200 HTTP request per 30 hari), bukan “gratis tanpa batas”.
-
-1. Aktifkan Cron/pg_cron, pg_net, dan Vault pada Supabase sesuai dokumentasi project.
-2. Buat Vault secrets melalui dashboard: `focusdesk_app_url` = APP_URL tanpa slash akhir; `focusdesk_cron_secret` = CRON_SECRET Vercel. Jangan menulis nilai asli dalam file SQL yang dibagikan.
-3. Jalankan `supabase/06_optional_queue_worker.sql`. Script berhenti jika secret belum ada.
-4. Periksa job `focusdesk-telegram-queue` dan hasil HTTP/job execution. Worker hanya memproses antrean, tidak mengubah jam briefing.
-5. Untuk menghentikan dengan sengaja: `select cron.unschedule('focusdesk-telegram-queue');`. Ini menghapus jadwal worker tersebut, bukan task/antrean.
-
-Alternatif Vercel Pro: cron per menit ke `/api/telegram-cron?mode=queue`. Jangan memasukkan cron per menit ke konfigurasi Hobby. Pilih satu worker terjadwal; dua worker tetap memakai kuota walaupun klaim antrean dilindungi lock.
+Tombol Send personal briefing tetap mengirim ringkasan pribadi manual terpisah. Untuk aktivasi, definisi filter, monitoring, recovery dan cara berhenti, gunakan SCHEDULER_GUIDE.
 
 ## 10. Checklist pengujian akun Anda
 
 - [ ] Migrasi sukses; task/PIC/user lama dan laporan tetap tersedia.
-- [ ] Label aplikasi v1.4, package.json 1.4.0.
+- [ ] Label aplikasi v1.5, package.json 1.5.0.
 - [ ] Webhook production benar, tidak terkena redirect/protection.
 - [ ] Pemilik dan programmer pairing akun masing-masing; kode lama ditolak.
 - [ ] Grup dipasangkan oleh admin yang tepat.
@@ -260,7 +234,7 @@ Alternatif Vercel Pro: cron per menit ke `/api/telegram-cron?mode=queue`. Jangan
 - **Origin tidak diizinkan:** APP_URL harus sama dengan origin yang dibuka; pakai satu domain canonical, redeploy.
 - **Tabel/kolom/RPC tidak ditemukan:** jalankan upgrade lengkap pada project SUPABASE_URL yang benar; periksa schema cache bila perlu.
 - **PIC tidak bisa klik:** akun aktif, PIC linked, task tersimpan dengan PIC itu, pairing dari akun programmer sendiri, dan username cocok. Kirim `/start` untuk memperbarui username yang dibaca bot. Cari tombol di DM, bukan kartu grup.
-- **Start work tidak terlihat di web:** cek konfirmasi “Status tersimpan”, lalu indikator Sinkron pada tab aktif. Jika tertunda, periksa jaringan/session dan Vercel logs. Bila Supabase menunjukkan In progress tetapi UI belum, pastikan source v1.4 terdeploy dan lakukan hard refresh sekali. Bila bot tidak mengonfirmasi, periksa error di chat, versi kartu dan hasil migrasi; jangan menganggap klik sebagai bukti tersimpan.
+- **Start work tidak terlihat di web:** cek konfirmasi “Status tersimpan”, lalu indikator Sinkron pada tab aktif. Jika tertunda, periksa jaringan/session dan Vercel logs. Bila Supabase menunjukkan In progress tetapi UI belum, pastikan source v1.5 terdeploy dan lakukan hard refresh sekali. Bila bot tidak mengonfirmasi, periksa error di chat, versi kartu dan hasil migrasi; jangan menganggap klik sebagai bukti tersimpan.
 - **Bot tidak menjawab grup:** periksa webhook, admin, perintah @username, dan jangan kirim sebagai anonymous admin/channel.
 - **/tasks kosong:** task harus aktif dan terjadwal/deadline hari ini/tertunda, grup cocok, akun punya akses.
 - **Email invite/reset gagal:** periksa Supabase Auth SMTP/rate limit, bukan token Telegram.

@@ -23,7 +23,7 @@ try{
  await page.route('**/api/**',async route=>{const req=route.request(),u=new URL(req.url()),name=u.pathname.split('/').pop(),b=req.postDataJSON();requests.push({name,b,query:u.search,method:req.method()});let data={};
   if(name==='profile')data={profile:{id:sessionUser,email:'justin@example.com',display_name:'Justin',role:'admin',is_active:true},preferences:{capacity:360,email_enabled:false},deliveries:[],emailConfigured:false};
   if(name==='pics'){if(b){pics=[{...pics[0],...b}];data={pic:pics[0]}}else data={pics,hasMore:false};}
-  if(name==='telegram')data=b?{code:'X'.repeat(32),message:'OK'}:{configured:true,webhookConfigured:true,botUsername:'focusdesk_test_bot',account:{telegram_id:101,telegram_username:'justin_sa'},groups:[{id:G,title:'GEE Team',active:true}],history:[]};
+  if(name==='telegram')data=b?{code:'X'.repeat(32),message:'OK'}:{configured:true,webhookConfigured:true,botUsername:'focusdesk_test_bot',account:{telegram_id:101,telegram_username:'justin_sa'},groups:[{id:G,title:'GEE Team',active:true}],history:[{kind:'briefing',schedule_slot:'morning',day,status:'sent',attempts:1}],scheduler:{last_tick_at:new Date().toISOString()}};
   if(name==='tasks'){
    if(req.method()==='PATCH'){let current=tasks.find(t=>t.id===b.id);if(current.version!==b.version){await route.fulfill({status:409,contentType:'application/json',body:'{"error":"Stale version"}'});return;}tasks=tasks.map(t=>t.id===b.id?{...t,...b,version:t.version+1}:t);}
    if(req.method()==='POST')tasks.push({...base,...b,version:1});
@@ -48,7 +48,10 @@ try{
  await page.locator('[data-edit="'+ids[0]+'"]').first().click();await page.locator('[data-wf="done"]').click();await page.waitForFunction(()=>!document.querySelector('#task-dialog').open);assert.equal(tasks[0].status,'Done');
  await page.locator('.side [data-page="PIC contacts"]').click();await page.getByText('@raka_dev',{exact:true}).waitFor();await page.locator('[data-editpic]').click();
  await page.locator('[name="telegram_username"]').fill('@raka_engineer');await page.getByRole('button',{name:'Save PIC',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('#account-dialog').open);assert.equal(requests.find(r=>r.name==='pics'&&r.b).b.telegram_username,'@raka_engineer');
- await page.locator('.side [data-page="Settings"]').click();await page.locator('[data-tg="personal"]').click();await page.getByText('/start '+'X'.repeat(32),{exact:true}).waitFor();
+ await page.locator('.side [data-page="Settings"]').click();await page.getByText('Scheduler · Asia/Jakarta',{exact:true}).waitFor();
+ assert.match(await page.locator('.telegram-panel').innerText(),/09.00.*17.30/);assert.match(await page.locator('.telegram-panel').innerText(),/Panggilan terakhir:/);
+ await page.screenshot({path:'qa/scheduler-settings.png',fullPage:true});
+ await page.locator('[data-tg="personal"]').click();await page.getByText('/start '+'X'.repeat(32),{exact:true}).waitFor();
  // New recurring + Telegram group payload remains intact.
  await page.locator('[data-action="new"]').first().click();await page.locator('[name="title"]').fill('Recurring test');await page.locator('[name="repeat_pattern"]').selectOption('daily');await page.locator('[name="telegram_group_id"]').selectOption(G);await page.getByRole('button',{name:'Save task',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('#task-dialog').open);assert.equal(requests.find(r=>r.name==='tasks'&&r.method==='POST').b.repeat_pattern,'daily');
  await page.locator('.side [data-page="Overview"]').click();await page.setViewportSize({width:390,height:844});await page.clock.fastForward(6500);await page.screenshot({path:'qa/dashboard-mobile.png',fullPage:true});

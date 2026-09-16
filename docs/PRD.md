@@ -1,4 +1,17 @@
-# Product requirements — Focusdesk 1.4
+# Product requirements — Focusdesk 1.5
+
+## Tambahan rilis 1.5
+
+Target tetap pengguna/pemilik, PIC dan grup yang sudah ada. Briefing setiap hari pukul 09.00 WIB ke grup aktif; eksekusi di DM PIC sesuai status; Ready for Testing/Testing ke DM pemilik. Evaluasi grup pukul 17.30 WIB memuat tertunda sebelum hari ini, hari ini belum selesai, dan agenda besok. Definisi serta batas kirim tertulis di SCHEDULER_GUIDE.
+
+Acceptance tambahan: clock WIB dari database, morning/evening terpisah, kunci unik tanggal/slot, klaim SKIP LOCKED, fallback tidak menggandakan antrean, full counts dengan sampel maksimal 5, grup dibatasi owner+group, card revalidasi status/izin, expiry pagi 17.30 dan harian tengah malam, recurrence besok tersedia tanpa browser terbuka, semua kartu eligible dibuat meski >20 (worker bertahap), migrasi tanpa reset.
+
+Non-goal: jam custom per pengguna/grup, janji detik-presisi, laporan historis snapshot di pukul yang tepat, DM kartu kedua pada sore hari, atau pengiriman ulang otomatis timeout ambigu.
+
+UX: Settings menampilkan jadwal, heartbeat terakhir, dan label slot/day pada riwayat. Stack dipertahankan sesuai aplikasi existing; Supabase Cron digunakan untuk presisi pemicu dan pemrosesan antrean, dengan Vault untuk rahasia. Tidak ada perubahan ke demo HTML presentasi v1.4.
+
+## Persyaratan yang dipertahankan
+
 
 ## Pengguna dan tujuan
 

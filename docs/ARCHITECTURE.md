@@ -1,4 +1,29 @@
-# Architecture — Focusdesk 1.4.0
+# Architecture — Focusdesk 1.5.0
+
+## Tambahan scheduler
+
+Stack production tetap HTML/CSS/JS, Node 22 Vercel Functions, Supabase Auth/Postgres, dan Telegram Bot API. Tidak mengganti framework atau database. Supabase Cron + pg_net memanggil endpoint yang sudah ada setiap menit karena Vercel Hobby tidak memberi presisi menit; Vault menyimpan origin dan CRON_SECRET. Detail konfigurasi ada pada SCHEDULER_GUIDE.
+
+Flow: cron HTTP ber-Bearer secret → allowlist mode → fd_tg_schedule memakai clock DB WIB → lock tanggal/slot dan insert run unik → materialisasi recurrence → outbox ringkasan/kartu → fd_tg_claim → kirim grup → kartu dengan depends_on menunggu tick berikutnya → validasi ulang task/role/username → kirim DM. Normal event-notification tetap berjalan; saat materialisasi scheduler event-card sementara ditekan agar tidak menggandakan kartu pagi. Activity tetap dicatat.
+
+| File/table | Struktur / tugas |
+| --- | --- |
+| supabase/08_scheduled_briefings.sql | Migrasi data/function; tidak mengaktifkan cron |
+| supabase/09_enable_telegram_scheduler.sql | Aktivasi Cron terpisah setelah deploy + Vault siap |
+| server/briefing.js | Formatter bounded + expiry WIB, tanpa I/O |
+| api/telegram-cron.js | GET authenticated, modes schedule/morning/evening/queue; tidak menerima clock dari query |
+| fd_tg_schedule_runs | PK(day date, slot text), created_at timestamptz, materialized/summaries/cards int; service only, RLS |
+| fd_tg_scheduler_health | id boolean PK check true, last_tick_at/last_generated_at timestamptz, last_slot text; service only |
+| fd_telegram_outbox | Tambahan schedule_slot text nullable check morning/evening, depends_on uuid FK ke outbox ON DELETE SET NULL; kind menerima briefing |
+| fd_tg_schedule(text,timestamptz) | Service-only clock injection untuk test/recovery; endpoint hanya meneruskan slot |
+| fd_tg_briefing_data(uuid,uuid,date) | Service-only owner+group scope, active profiles/group, non-Done, full counts + top 5 per bucket |
+
+Periode morning 09.00–17.29, evening 17.30–23.59, tidak ada catch-up morning setelah 17.30. Run log 180 hari. Outbox pending/failed expiry diperiksa saat claim; expiry dicek lagi tepat sebelum send. Payload dibaca saat dispatch, bukan snapshot jam jadwal. depends_on melepas card setelah parent sent/skipped/uncertain atau failed lima percobaan; tidak memblokir pribadi selamanya bila grup gagal. Provider timeout tetap uncertain, tidak retry otomatis.
+
+Security: numeric pairing/username dan role guard v1.4 dipertahankan. Tidak ada grant RPC baru untuk browser. API Settings mengekspos timestamp health, bukan konfigurasi Vault atau daftar task global. Pengujian memakai mock HTTP/PGlite; pg_cron/pg_net/Vault live memerlukan verifikasi operator.
+
+## Arsitektur dasar dan aturan coding yang dipertahankan
+
 
 ## Stack dan struktur
 
@@ -29,7 +54,7 @@ Telegram: callback/reply → webhook secret check → numeric user ID mapping �
 
 Pairing: authenticated browser requests random 192-bit code → SHA256 hash stored, expiry 10 minutes → user sends code → server validates private/group context and group admin → transactional redeem consumes code and connects identity. Telegram ID is unique across accounts; expected usernames are matched against the username observed from a trusted Telegram update. Numeric ID remains the paired identity; username alone never grants assignment access.
 
-Daily: Vercel cron → service-only fd_tg_daily → active owners' recurrences materialized → dated personal/group summary outbox → claim/process up to 20. Optional queue-only worker drains pending retries without generating a daily summary at other times.
+Scheduled: Supabase Cron (recommended) or daily Vercel fallback → fd_tg_schedule → WIB window + day/slot unique run → recurrence materialization → group briefing / morning DM outbox → claim/process up to 20. The old fd_tg_daily entrypoint delegates to this window-gated scheduler. Personal digest remains a manual action.
 
 ## Data model
 
@@ -73,7 +98,7 @@ Task additions: requires_testing boolean default false; acceptance_criteria text
 
 Daily cleanup removes expired pairing codes, update/message mappings older than 30 days, and sent/skipped queue records older than 90 days. Older message buttons therefore stop working; obtain current cards. Pending/failed/uncertain records remain for inspection. Activity stays until task deletion; FK cascades are described in SQL. Export/backup before deletion when audit retention is required.
 
-Combined legacy upgrade wraps 03 + 04 + 05 + 07 in one transaction. For an existing v1.3 database use ONLY 07 (standalone Focusdesk_v1_3_to_v1_4.sql). Both paths are replay-safe; 07 leaves task rows/versions and pairing IDs untouched. Optional 06 is not auto-included. Existing tasks default to testing=false and group=NULL; no retroactive notification blast for all old tasks. Existing ongoing series adopt testing/group fields only when new templates are created; per-occurrence edits do not change series template.
+Combined legacy upgrade wraps 03 + 04 + 05 + 07 + 08 in one transaction. For existing v1.4 use ONLY 08 (Focusdesk_v1_4_to_v1_5.sql); v1.3 uses combined 07+08 (Focusdesk_v1_3_to_v1_5.sql). Migrations preserve existing task rows/versions and pairing IDs. Scheduler activation 09 is separate and supersedes old queue worker 06. Older tasks retain their testing/group configuration. Existing ongoing series adopt testing/group fields only when new templates are created; per-occurrence edits do not change series template.
 
 ## Coding rules
 

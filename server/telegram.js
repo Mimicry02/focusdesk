@@ -1,6 +1,7 @@
 import {sb,env,HttpError} from './core.js';
 import {actions,actionStatus,roleFor} from '../public/js/workflow.js';
 import {createHash} from 'node:crypto';
+import {briefingText,scheduledExpired} from './briefing.js';
 export const hashCode=v=>createHash('sha256').update(v).digest('hex');
 export const wibDay=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 export const rpc=(name,data)=>sb('/rest/v1/rpc/'+name,{method:'POST',admin:true,data});
@@ -42,11 +43,16 @@ async function delivery(o){
  const path='/rest/v1/fd_telegram_outbox?id=eq.'+o.id;
  const finish=data=>sb(path,{method:'PATCH',admin:true,data});
  try{
+  if(scheduledExpired(o))return await finish({status:'skipped',last_error:'Scheduled window expired'});
   const chat=await target(o);if(!chat)return await finish({status:'skipped',last_error:'Recipient disconnected or inactive'});
   let text,markup,t;
   if(o.kind==='task'){
    t=(await sb('/rest/v1/fd_tasks?id=eq.'+o.task_id+'&select=*',{admin:true}))[0];
    if(!t||(o.target_user_id&&![t.user_id,t.assignee_id].includes(o.target_user_id))||(o.target_group_id&&t.telegram_group_id!==o.target_group_id))return await finish({status:'skipped',last_error:'Task access changed'});
+   if(o.schedule_slot){
+    const role=roleFor(t,o.target_user_id);
+    if(t.status==='Done'||!actions(t,role.owner,role.executor).length||!await picTelegramAllowed(t,o.target_user_id))return await finish({status:'skipped',last_error:'Scheduled task no longer actionable for recipient'});
+   }
    const rows=await sb('/rest/v1/fd_telegram_accounts?user_id=in.('+[t.user_id,t.assignee_id].filter(Boolean).join(',')+')&select=user_id,telegram_id',{admin:true});
    text=card(t,Object.fromEntries(rows.map(r=>[r.user_id,r.telegram_id])));
    // A shared group card is read-only. Role-specific keyboards go to paired DMs.
@@ -55,6 +61,9 @@ async function delivery(o){
     markup=matched?keyboard(t,role.owner,role.executor):undefined;
     if(!matched)text+='\n\nUsername Telegram belum cocok dengan kontak PIC. Hubungi pemilik tugas.';
    }else text+='\n\nTombol pengerjaan dikirim ke chat pribadi PIC; tombol testing ke reviewer.';
+  }else if(o.kind==='briefing'){
+   const data=await rpc('fd_tg_briefing_data',{p_owner:o.owner_id,p_group:o.target_group_id,p_day:o.day});
+   text=briefingText(data,o.schedule_slot,o.day,env().app);
   }else{
    if(o.day!==wibDay())return await finish({status:'skipped',last_error:'Old daily summary expired'});
    const ts=await visibleTasks(o.target_user_id||o.owner_id,o.target_group_id,o.day);

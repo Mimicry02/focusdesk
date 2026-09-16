@@ -2,7 +2,8 @@
 -- Run only after configuring Supabase Cron/pg_net and two Vault secrets:
 -- focusdesk_app_url = exact HTTPS production origin, no trailing slash
 -- focusdesk_cron_secret = same >=32-character CRON_SECRET configured on Vercel
--- This job only drains the queue. Daily generation remains Vercel's 08:00 WIB job.
+-- LEGACY v1.3/v1.4 worker: in v1.5 use 09_enable_telegram_scheduler.sql instead.
+-- This job only drains the queue; it does not trigger v1.5 morning/evening generation.
 -- Can generate ~43,200 HTTP requests/month. Check your platform quotas first.
 begin;
 create extension if not exists pg_cron;

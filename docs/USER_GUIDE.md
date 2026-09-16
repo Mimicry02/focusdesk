@@ -1,4 +1,14 @@
-# Pemakaian harian — Focusdesk 1.4
+# Pemakaian harian — Focusdesk 1.5
+
+## Jadwal otomatis baru
+
+- **09.00 WIB, setiap hari:** grup menerima ringkasan tugas tertunda + rencana hari ini. Kartu tindakan ke DM PIC yang berhak; tugas review ke pemilik/reviewer.
+- **17.30 WIB, setiap hari:** grup menerima pekerjaan tertunda, pekerjaan hari ini yang belum Done, dan agenda besok. Tidak mengubah status/jadwal task otomatis.
+- Grup hanya merangkum task yang memilih grup tersebut. Task pribadi tidak ikut. Akun PIC harus linked, aktif, personal pairing, dan username cocok bila disetel.
+- Panggilan terakhir terlihat di Settings → Telegram; buka ulang Settings untuk memperbaruinya. Waktu terakhir bukan jaminan job masih aktif.
+- Aktivasi Supabase Cron memerlukan langkah tambahan pada docs/SCHEDULER_GUIDE.md; jangan menganggap upload ZIP saja sudah mengaktifkannya.
+- Ringkasan maksimal 5 contoh per bagian, tetapi jumlah menghitung semua task. Kartu diproses bertahap. Statusnya diperiksa kembali sebelum dikirim.
+
 
 ## Baru di v1.4
 

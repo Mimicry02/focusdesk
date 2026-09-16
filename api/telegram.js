@@ -5,12 +5,13 @@ export default handler(async(req,res)=>{
  if(req.method!=='GET')mutation(req);
  const ctx=await identity(req,res);
  if(req.method==='GET'){
-  const [accounts,groups,history]=await Promise.all([
+  const [accounts,groups,history,health]=await Promise.all([
    sb('/rest/v1/fd_telegram_accounts?select=*',{token:ctx.token}),
    sb('/rest/v1/fd_telegram_groups?select=*&order=created_at',{token:ctx.token}),
-   sb('/rest/v1/fd_telegram_outbox?owner_id=eq.'+ctx.user.id+'&select=id,kind,status,attempts,last_error,created_at&order=created_at.desc&limit=20',{admin:true})
+   sb('/rest/v1/fd_telegram_outbox?owner_id=eq.'+ctx.user.id+'&select=id,kind,status,attempts,last_error,created_at,schedule_slot,day&order=created_at.desc&limit=20',{admin:true}),
+   sb('/rest/v1/fd_tg_scheduler_health?id=eq.true&select=last_tick_at,last_generated_at,last_slot',{admin:true})
   ]);
-  return reply(res,200,{configured:!!process.env.TELEGRAM_BOT_TOKEN,webhookConfigured:!!process.env.TELEGRAM_WEBHOOK_SECRET,botUsername:process.env.TELEGRAM_BOT_USERNAME||'',account:accounts[0]||null,groups,history});
+  return reply(res,200,{configured:!!process.env.TELEGRAM_BOT_TOKEN,webhookConfigured:!!process.env.TELEGRAM_WEBHOOK_SECRET,botUsername:process.env.TELEGRAM_BOT_USERNAME||'',account:accounts[0]||null,groups,history,scheduler:health[0]||null});
  }
  const b=body(req);if(req.method!=='POST')throw new HttpError(405,'Method not allowed');
  if(b.action==='code'){

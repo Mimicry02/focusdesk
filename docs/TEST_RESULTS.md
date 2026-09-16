@@ -1,4 +1,19 @@
-# Test results — Focusdesk 1.4.0
+# Test results — Focusdesk 1.5.0
+
+## Verifikasi rilis 1.5 — 16 September 2026
+
+- 37 unit/mock API tests lulus: mencakup format briefing pagi/sore, escaping, panjang pesan, expiry WIB, allowlist cron, clock tidak diambil dari query HTTP, ringkasan grup scoped tanpa tombol, dan skip task Done sebelum kirim; regresi auth/PIC/report/Telegram sebelumnya tetap lulus.
+- SQL/PGlite v1.5 lulus: migrasi replay mempertahankan task/pairing, RPC service-only, 08:59/09:00/17:29/17:30/23:59/midnight, dedup slot/tanggal pada retry, count lengkap/sampel terbatas, isolasi owner+grup, routing executor/reviewer, pengecualian task future/Done/mismatch, ketergantungan ringkasan sebelum kartu, draining >20 kartu, unpaired/inactive, materialisasi recurrence tanpa event-card ganda, dan expiry pesan lama.
+- SQL/PGlite v1.4 sebagai regresi izin/status/testing kembali lulus.
+- Build static dan syntax frontend berhasil. Dependency versions dipertahankan; package/root lock version menjadi 1.5.0.
+- Playwright/Chromium API mocks lulus: polling status, perlindungan draf, workflow testing, username PIC, pairing, recurrence, desktop/mobile; tambahan Settings menampilkan 09.00/17.30 dan timestamp panggilan scheduler. Screenshot Settings disertakan.
+- Packaging menggunakan scripts/test-release.mjs untuk memeriksa ZIP, versi, file SQL dedicated/fresh/upgrade, transaksi tunggal, tidak ada env asli/node_modules, serta replay SQL gabungan. Script aktivasi dipisah dari migration data.
+
+**Belum diuji live:** pg_cron/pg_net/Vault pada project Supabase Anda, HTTP ke deployment Vercel, scheduler tepat waktu di production, kuota paket, dan bot/grup nyata. Tidak ada pesan ke orang lain yang dikirim selama pengujian. SQL clock test deterministik bukan pembuktian presisi penyedia scheduler. Node lokal 24, target production 22.
+
+Reproduksi: `npm test`, `npm run build`, `PGLITE_MODULE=<entrypoint> node scripts/test-v15-sql.mjs`, kemudian `node scripts/package-release.mjs <folder>` dan `PGLITE_MODULE=<entrypoint> node scripts/test-release.mjs <folder>`. Browser memakai script test-v14-ui.mjs yang telah ditambah pemeriksaan Settings scheduler.
+
+## Catatan historis rilis 1.4
 
 Tanggal: 13 September 2026. Tidak memakai project Supabase, akun Vercel, atau token Telegram pengguna. Tidak ada pesan/undangan live yang dikirim oleh pengujian ini.
 
