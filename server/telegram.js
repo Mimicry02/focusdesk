@@ -1,6 +1,7 @@
 import {sb,env,HttpError} from './core.js';
 import {actions,actionStatus,roleFor} from '../public/js/workflow.js';
 import {createHash} from 'node:crypto';
+import {receiveDesk,drainDesk} from './desk.js';
 import {briefingText,scheduledExpired} from './briefing.js';
 export const hashCode=v=>createHash('sha256').update(v).digest('hex');
 export const wibDay=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
@@ -88,6 +89,7 @@ export async function receive(update){
  if(!Number.isSafeInteger(update.update_id))throw new HttpError(400,'Invalid update');
  const q=update.callback_query,m=q?.message||update.message,from=q?.from||m?.from;
  if(!m||!from||from.is_bot||m.sender_chat||!['private','group','supergroup'].includes(m.chat?.type))return;
+ if(await receiveDesk(update,telegram)){await drain(null,8);return;}
  const chat=m.chat.id;
  if(!Number.isSafeInteger(chat)||!Number.isSafeInteger(from.id))return;
  const respond=text=>telegram('sendMessage',{chat_id:chat,text,reply_parameters:{message_id:m.message_id}});
@@ -117,7 +119,7 @@ export async function receive(update){
    await respond(ts.length?`${Math.min(ts.length,10)} kartu dikirim melalui antrean ke chat pribadi Anda. Tugas lain tersedia di Focusdesk.`:'Tidak ada tugas hari ini/tertunda yang dapat Anda akses.');
    await drain(null,12);return;
   }
-  if(/^\/(help|start)(?:@[A-Za-z0-9_]+)?$/.test(text.trim())){await respond('Buat/assign tugas di Focusdesk. /tasks: kartu hari ini & tertunda. Gunakan tombol atau reply kartu: start, ready, testing, done, fail: alasan, progress: catatan. Fail wajib alasan; hanya pemilik dapat meluluskan testing. Kalimat bebas tidak mengubah status.');return;}
+  if(/^\/(help|start)(?:@[A-Za-z0-9_]+)?$/.test(text.trim())){await respond('Knowledge Desk: /apps untuk daftar aplikasi; /ask KODE pertanyaan dalam grup terhubung. Buat/assign tugas di Focusdesk. /tasks: kartu hari ini & tertunda. Gunakan tombol atau reply kartu: start, ready, testing, done, fail: alasan, progress: catatan. Fail wajib alasan; hanya pemilik dapat meluluskan testing. Kalimat bebas tidak mengubah status.');return;}
   let input,binding;
   if(q){input=parseCallback(q.data);if(!input)return;binding=(await sb(`/rest/v1/fd_telegram_messages?chat_id=eq.${chat}&message_id=eq.${m.message_id}&select=*`,{admin:true}))[0];}
   else if(m.reply_to_message){binding=(await sb(`/rest/v1/fd_telegram_messages?chat_id=eq.${chat}&message_id=eq.${m.reply_to_message.message_id}&select=*`,{admin:true}))[0];const parsed=parseReply(text);if(binding&&parsed)input={...parsed,id:binding.task_id,version:binding.task_version};}
@@ -139,6 +141,6 @@ export async function receive(update){
   // Confirm only committed database state; notification delivery can finish separately.
   try{await respond(`✓ ${t.title}\nStatus tersimpan: ${result.status}\nDashboard akan menyinkronkan otomatis (sekitar 10 detik saat tab aktif).`)}catch{}
   if(q)try{await telegram('editMessageReplyMarkup',{chat_id:chat,message_id:m.message_id,reply_markup:{inline_keyboard:[]}})}catch{}
-  await flushQuietly(t.user_id);
+  await flushQuietly(t.user_id);await drainDesk(telegram,6);
  }catch(e){await respond(e.status?e.message:e.message?.startsWith('Telegram')?'Telegram sedang bermasalah. Coba kembali.':e.message||'Tidak dapat memproses tindakan.');}
 }

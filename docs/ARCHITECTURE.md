@@ -1,3 +1,5 @@
+> Untuk tambahan v1.6, baca [Knowledge Desk](KNOWLEDGE_DESK.md). Bagian di bawah mendokumentasikan fondasi versi sebelumnya.
+
 # Architecture — Focusdesk 1.5.0
 
 ## Tambahan scheduler

@@ -1,3 +1,5 @@
+> Untuk tambahan v1.6, baca [Knowledge Desk](KNOWLEDGE_DESK.md). Bagian di bawah mendokumentasikan fondasi versi sebelumnya.
+
 # Product requirements — Focusdesk 1.5
 
 ## Tambahan rilis 1.5

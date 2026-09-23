@@ -1,5 +1,6 @@
 import {handler,reply,secretMatches,HttpError} from '../server/core.js';
-import {rpc,drain} from '../server/telegram.js';
+import {rpc,drain,telegram} from '../server/telegram.js';
+import {drainDesk} from '../server/desk.js';
 export default handler(async(req,res)=>{
  if(req.method!=='GET')throw new HttpError(405,'Method not allowed');
  if(!secretMatches(req.headers.authorization?.replace(/^Bearer /,''),process.env.CRON_SECRET))throw new HttpError(401,'Unauthorized');
@@ -7,5 +8,5 @@ export default handler(async(req,res)=>{
  if(!['queue','schedule','morning','evening'].includes(mode))throw new HttpError(400,'Invalid cron mode');
  if(!process.env.TELEGRAM_BOT_TOKEN)return reply(res,200,{disabled:true,reason:'Telegram token not configured'});
  const generated=mode==='queue'?0:await rpc('fd_tg_schedule',{p_slot:['morning','evening'].includes(mode)?mode:null});
- return reply(res,200,{generated,...await drain(null,20)});
+ return reply(res,200,{generated,...await drain(null,20),desk:await drainDesk(telegram,8)});
 });

@@ -49,7 +49,7 @@ SQL upgrade mempertahankan task, PIC, user, dan pairing. Aktivasi scheduler dipi
 | `focusdesk_cron_secret` | Nilai yang sama persis dengan `CRON_SECRET` di environment Production Vercel. |
 
 3. Pastikan masing-masing nama hanya memiliki **satu** secret. Jika sudah dibuat saat memakai worker v1.3/v1.4, perbarui nilainya bila perlu; jangan membuat duplikat.
-4. Supabase → SQL Editor → jalankan `Focusdesk_Activate_Scheduler_v1_5.sql` (salinan `supabase/09_enable_telegram_scheduler.sql`).
+4. Supabase → SQL Editor → jalankan `Focusdesk_Activate_Scheduler_v1_6.sql` (salinan `supabase/09_enable_telegram_scheduler.sql`).
 5. Periksa job **focusdesk-telegram-scheduler** dengan ekspresi `* * * * *`. Script menghapus hanya worker lama bernama `focusdesk-telegram-queue` bila ada dan menggantikannya. Menjalankan script aktivasi kembali memperbarui named job yang sama.
 6. Tunggu satu–dua menit, lalu buka Focusdesk → Settings & integrations → Telegram. Periksa **Panggilan terakhir**. Buka ulang Settings untuk pembacaan baru. Waktu terakhir bukan jaminan scheduler masih berjalan di masa depan.
 7. Periksa status HTTP pada monitoring pg_net dan Vercel Functions. Cron SQL berstatus sukses hanya berarti request berhasil dijadwalkan; belum membuktikan respons HTTP atau pengiriman Telegram berhasil.

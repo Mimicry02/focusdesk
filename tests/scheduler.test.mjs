@@ -22,10 +22,10 @@ test('scheduled expiry uses WIB midnight and morning cutoff',()=>{
 });
 test('cron allowlists modes, passes slot only, uses DB clock and queue mode does not generate',async()=>{
  const previous=global.fetch,calls=[];process.env.TELEGRAM_BOT_TOKEN='123:fake';
- global.fetch=async(url,opt)=>{calls.push({url,data:JSON.parse(opt.body||'{}')});if(url.includes('fd_tg_schedule'))return json({generated:true});if(url.includes('fd_tg_claim'))return json([]);throw Error('unexpected')};
+ global.fetch=async(url,opt)=>{calls.push({url,data:JSON.parse(opt.body||'{}')});if(url.includes('fd_tg_schedule'))return json({generated:true});if(url.includes('fd_tg_claim')||url.includes('fd_desk_claim'))return json([]);throw Error('unexpected')};
  try{
-  for(const mode of ['morning','evening','schedule']){const r=res();await cron({method:'GET',headers:{authorization:'Bearer '+process.env.CRON_SECRET},query:{mode,p_now:'1999-01-01'}},r);assert.equal(r.code,200);assert.deepEqual(calls.at(-2).data,{p_slot:mode==='schedule'?null:mode});}
-  const n=calls.length,r=res();await cron({method:'GET',headers:{authorization:'Bearer '+process.env.CRON_SECRET},query:{mode:'queue'}},r);assert.equal(calls.length,n+1);assert.ok(calls.at(-1).url.includes('fd_tg_claim'));
+  for(const mode of ['morning','evening','schedule']){const r=res();await cron({method:'GET',headers:{authorization:'Bearer '+process.env.CRON_SECRET},query:{mode,p_now:'1999-01-01'}},r);assert.equal(r.code,200);assert.deepEqual(calls.at(-3).data,{p_slot:mode==='schedule'?null:mode});}
+  const n=calls.length,r=res();await cron({method:'GET',headers:{authorization:'Bearer '+process.env.CRON_SECRET},query:{mode:'queue'}},r);assert.equal(calls.length,n+2);assert.ok(calls.at(-1).url.includes('fd_desk_claim'));
   const bad=res();await cron({method:'GET',headers:{authorization:'Bearer '+process.env.CRON_SECRET},query:{mode:'arbitrary'}},bad);assert.equal(bad.code,400);
  }finally{global.fetch=previous;delete process.env.TELEGRAM_BOT_TOKEN;}
 });
