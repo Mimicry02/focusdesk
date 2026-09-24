@@ -1,0 +1,30 @@
+import {readFile} from 'node:fs/promises';
+let code=await readFile(new URL('./test-v16-ui.mjs',import.meta.url),'utf8');
+for(const [key,pkg] of [['PLAYWRIGHT_MODULE','playwright'],['CHROMIUM_MODULE','@sparticuz/chromium']])code=code.replace(`process.env.${key}||'${pkg}'`,JSON.stringify(import.meta.resolve(process.env[key]||pkg)));
+code=code.replace("page.getByText('Bring support into the workflow.').waitFor()","page.locator('.desk-welcome').waitFor()");
+code=code.replace("if(req.method()==='POST'){save=req.postDataJSON();d={id:A};}","if(req.method()==='POST'){save=req.postDataJSON();d=save.kind==='ai-test'?{ok:true,message:'Key dan akses model terverifikasi.'}:{id:A};}");
+code=code.replace("master:role==='admin'?master:null}","master:role==='admin'?master:null,ai:{enabled:true,configured:true,model:'gpt-4.1-mini',dailyLimit:100,today:2,recent:[{number:16,mode:'ai',reason:'ok',status:'sent'}]}}");
+code=code.replace("await page.locator('[data-page=\"Applications\"]').click();",`await page.locator('#nav [data-page="AI & Telegram"]').click();
+assert.equal(await page.locator('input[type=password]').count(),0);
+await page.locator('#test-ai').click();await page.getByText('Key dan akses model terverifikasi.',{exact:true}).waitFor();
+await page.screenshot({path:'qa/ai-desktop.png',fullPage:true});
+await page.setViewportSize({width:390,height:844});await page.screenshot({path:'qa/ai-mobile.png',fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+await page.setViewportSize({width:1440,height:1000});
+await page.locator('#nav [data-page="Applications"]').click();`);
+const workspace=`
+await page.setViewportSize({width:1440,height:1000});
+await page.route('**/api/profile',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({profile:{id:A,email:'justin@example.com',display_name:'Justin',role:'admin'},preferences:{capacity:360},deliveries:[]})}));
+await page.route('**/api/tasks*',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({tasks:[{id:R,title:'UAT GEE Platform',user_id:A,category:'Full Time',status:'Ready for Testing',duration:60,priority:'High',scheduled_date:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())}],hasMore:false})}));
+await page.route('**/api/pics*',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({pics:master.pics,hasMore:false})}));
+await page.route('**/api/telegram',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({configured:true,groups:[],history:[],account:{telegram_id:101},botUsername:'focusdesk_test_bot'})}));
+await page.goto('http://127.0.0.1:'+server.address().port+'/index.html');await page.locator('.ws-grid').waitFor();
+await page.screenshot({path:'qa/workspace-desktop.png',fullPage:true});
+await page.locator('.ws-grid [data-page="Overview"]').click();await page.locator('.metrics-grid').waitFor();
+await page.locator('.side [data-page="Workspace"]').click();
+await page.setViewportSize({width:390,height:844});await page.screenshot({path:'qa/workspace-mobile.png',fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+await page.locator('.ws-connect a').click();await page.locator('#test-ai').waitFor();assert.ok(page.url().endsWith('/desk.html#ai'));
+await page.setViewportSize({width:1440,height:1000});
+`;
+code=code.replace("role='user';",workspace+"\nrole='user';");
+code=code.replace('PASS v1.6 browser:','PASS v1.7 browser: Workspace desktop/mobile, navigation, AI connection UI,');
+try{await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));}catch(err){console.error(err.message);process.exitCode=1;}

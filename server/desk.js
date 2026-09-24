@@ -1,5 +1,6 @@
 import {sb,HttpError} from './core.js';
 import {terms,askInput,deskCallback} from './knowledge.js';
+import {aiConfig,answerFromGuides} from './ai.js';
 const rpc=(name,data)=>sb('/rest/v1/rpc/'+name,{method:'POST',admin:true,data});
 // Dependency injection keeps the Telegram transport shared with the existing workflow.
 export async function receiveDesk(update,telegram){
@@ -34,7 +35,10 @@ export async function receiveDesk(update,telegram){
 }
 export async function drainDesk(telegram,limit=8){
  if(!process.env.TELEGRAM_BOT_TOKEN)return {disabled:true};
- const rows=await rpc('fd_desk_claim',{p_limit:limit});
+ // One answer per invocation when AI is enabled keeps inference within Vercel's time budget.
+ // Remaining entries are drained by the existing one-minute worker.
+ const config=aiConfig();
+ const rows=await rpc('fd_desk_claim',{p_limit:config.enabled&&config.configured?1:limit});
  for(const o of rows){
  const finish=data=>sb('/rest/v1/fd_desk_outbox?id=eq.'+o.id,{method:'PATCH',admin:true,data:{...data,updated_at:new Date().toISOString()}});
  let accepted=false;
@@ -42,7 +46,22 @@ export async function drainDesk(telegram,limit=8){
  const context=await rpc('fd_desk_context',{p_chat:o.chat_id});
  if(!context||context.group_id!==o.group_id){await finish({status:'skipped',last_error:'Group inactive'});continue;}
  if(o.request_id){const r=(await sb('/rest/v1/fd_support_requests?id=eq.'+o.request_id+'&select=application_id',{admin:true}))[0];if(!r||!context.applications.some(a=>a.id===r.application_id)){await finish({status:'skipped',last_error:'Application visibility revoked'});continue;}}
- const sent=await telegram('sendMessage',{chat_id:o.chat_id,text:o.text,link_preview_options:{is_disabled:true},...(o.reply_to?{reply_parameters:{message_id:o.reply_to,allow_sending_without_reply:true}}:{}),...(o.markup?{reply_markup:o.markup}:{})});accepted=true;
+ let text=o.text;
+ if(o.ai_state&&o.ai_state!=='none'){
+ const ctx=await rpc('fd_desk_ai_context',{p_outbox:o.id});
+ if(!ctx){await finish({status:'skipped',last_error:'Access revoked'});continue;}
+ const cachedValid=o.ai_state==='complete'&&(o.ai_result?.mode==='unanswered'||(o.ai_result?.sources?.length&&o.ai_result.sources.every(s=>ctx.sources.some(c=>c.id===s.id))));
+ if(!cachedValid){
+ let result={mode:'fallback',answer:'',sourceIds:[],model:config.model,reason:o.ai_state==='complete'?'sources_changed':'disabled'};
+ if(o.ai_state==='pending'&&config.enabled&&config.configured&&ctx.sources.length){
+ const reserved=await rpc('fd_desk_ai_reserve',{p_outbox:o.id,p_limit:config.dailyLimit});
+ result=reserved?await answerFromGuides(ctx.question,ctx.sources):{...result,reason:'daily_limit'};
+ }
+ const saved=await rpc('fd_desk_ai_finish',{p_outbox:o.id,p_mode:result.mode,p_answer:result.answer,p_source_ids:result.sourceIds,p_model:result.model,p_reason:result.reason});
+ if(saved.skip)continue;text=saved.text;
+ }
+ }
+ const sent=await telegram('sendMessage',{chat_id:o.chat_id,text,link_preview_options:{is_disabled:true},...(o.reply_to?{reply_parameters:{message_id:o.reply_to,allow_sending_without_reply:true}}:{}),...(o.markup?{reply_markup:o.markup}:{})});accepted=true;
  await finish({status:'sent',sent_message_id:sent.message_id,last_error:null});
  }catch(e){await finish({status:accepted||e.uncertain?'uncertain':e.permanent?'skipped':'failed',last_error:accepted?'Sent; bookkeeping failed':e.message?.startsWith('Telegram')?e.message:'Delivery unavailable',next_attempt_at:new Date(Date.now()+Math.max(60,e.retryAfter||0)*1000).toISOString()});}
  }
