@@ -1,45 +1,56 @@
-# Focusdesk v1.6.0 — Knowledge Desk
+# Focusdesk v1.7.0 — AI Knowledge Assistant & Workspace
 
-Paket aplikasi Vercel + Supabase + Telegram. Rilis 1.6 menambahkan master aplikasi/kategori/priority/PIC routing, panduan Markdown, pelaporan lewat bot, eskalasi task, dan riwayat laporan yang tidak dapat diedit.
+Bot Telegram existing sekarang dapat memakai OpenAI API untuk menyusun jawaban dari panduan Published. Workspace baru menyediakan akses cepat ke pekerjaan, Knowledge Desk, PIC, laporan, dan AI/Telegram. Panduan HTML: `public/guide-v1-7.html`.
 
-**Mulai:** [Manual Knowledge Desk](docs/KNOWLEDGE_DESK.md) · HTML interaktif di `public/guide-v1-6.html` (bisa dibuka langsung tanpa server).
+## Upgrade
+1. Backup database dan simpan source deployment lama.
+2. **Sudah v1.6:** jalankan `Focusdesk_v1_6_to_v1_7.sql` seluruhnya di Supabase SQL Editor.
+3. **Masih v1.3–v1.5:** gunakan `Focusdesk_Upgrade_to_v1_7.sql`. **Database kosong saja:** `Focusdesk_Supabase_v1_7.sql`, lalu bootstrap admin melalui `supabase/02_bootstrap_admin.sql`.
+4. Ekstrak ZIP dan ganti isi root repository GitHub dengan file aplikasi, termasuk api/, server/ dan public/. Jangan upload ZIP sebagai satu file dan jangan hanya mengganti FE.
+5. Tambahkan environment OpenAI untuk Production di Vercel, lalu redeploy. Build `npm run build`, output `dist`, Node 22.
+6. Login admin → Workspace → Telegram & AI assistant → Periksa koneksi AI. Tes membaca akses model; billing/quota generasi masih perlu diuji dengan /ask.
+7. Pastikan aplikasi, PIC routing, Group access, dan panduan Published siap. Di grup: `/apps`, lalu `/ask KODE pertanyaan`.
 
-## Upgrade dari v1.5
-1. Simpan backup database dan source deployment yang sedang dipakai.
-2. Jalankan **Focusdesk_v1_5_to_v1_6.sql** di Supabase SQL Editor sebagai project owner. Ini menambah schema/RPC baru, tidak mereset task, user, PIC atau pairing Telegram.
-3. Ekstrak ZIP. Upload seluruh isi ke root repository GitHub: `api/`, `server/`, `public/`, `supabase/`, `package.json`, `package-lock.json`, `vercel.json`, dan dokumen. Jangan upload ZIP sebagai satu file, jangan hanya upload `public/`.
-4. Vercel memakai root yang berisi package.json; build `npm run build`, output `dist`, Node 22. Tunggu deployment Production Ready.
-5. Environment yang lama tetap dipakai. Tidak perlu token AI baru dan tidak perlu pairing ulang jika bot/domain tetap sama.
-6. Login admin → sidebar **Knowledge Desk** → Buat master awal → Applications → PIC routing → Group access → Knowledge articles.
-7. Grup uji: `/apps`, lalu `/ask GEE pertanyaan`. Periksa alur eskalasi dan PIC sebelum membuka akses grup lain.
-8. Jalankan query read-only `supabase/11_diagnostics.sql`. Kalau cron sudah aktif/sehat, tidak perlu dihapus atau dipasang ulang. Kalau belum ada/nonaktif, jalankan **Focusdesk_Activate_Scheduler_v1_6.sql** setelah memeriksa Vault.
+Migration additive dan dapat dijalankan ulang. Tidak mereset task, pengguna, PIC atau pairing. Bot/domain yang sama tidak memerlukan setWebhook ulang. Cron sehat tidak perlu dipasang ulang; `supabase/09_enable_telegram_scheduler.sql` hanya untuk pemasangan/perbaikan cron setelah Vault diperiksa.
 
-**Jangan menjalankan SQL fresh pada database lama.** Dari v1.3/v1.4 gunakan **Focusdesk_Upgrade_to_v1_6.sql** (gabungan migrasi 03,04,05,07,08,10, dapat diterapkan ulang). Instalasi kosong: **Focusdesk_Supabase_v1_6.sql**, lalu ikuti `supabase/02_bootstrap_admin.sql` untuk mengaktifkan akun admin Anda.
+## Environment OpenAI baru
+| Nama | Nilai |
+|---|---|
+| OPENAI_API_KEY | Key baru project OpenAI, hanya di server Vercel |
+| OPENAI_ENABLED | `true` untuk aktif; default `false` |
+| OPENAI_MODEL | `gpt-4.1-mini` default; model Responses/Structured Outputs lain perlu uji kompatibilitas |
+| OPENAI_DAILY_LIMIT | `100` default; 1–500 panggilan/workspace/hari WIB, termasuk percobaan gagal |
 
-## Environment dan integrasi
-Wajib untuk server/auth: `APP_URL` (origin production), `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`.
-Telegram: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (minimal 32 karakter), `CRON_SECRET` (minimal 32 karakter). Gunakan bot yang sudah terhubung; webhook tetap `/api/telegram-webhook` dan secret header Telegram tetap sama. Untuk bot baru ikuti panduan Telegram lama di docs.
-Email opsional: `RESEND_API_KEY`, `EMAIL_FROM`. Calendar/export dan workflow lama tetap tersedia.
+Cabut API key yang pernah dibagikan di chat. Key tersebut tidak disertakan atau digunakan dalam paket ini. Jangan kirim penggantinya lewat chat; jangan pakai prefix environment publik. Pastikan billing API dan akses model project tersedia.
 
-Vault untuk cron: tepat satu `focusdesk_app_url` berisi origin aplikasi sebenarnya dan tepat satu `focusdesk_cron_secret` dengan nilai sama persis dengan `CRON_SECRET` deployment Production. Nilai contoh bukan credential. Simpan environment Vercel lalu redeploy agar berlaku. Jangan mengirim secret ke chat atau GitHub.
+Environment existing: APP_URL, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME (tanpa @), TELEGRAM_WEBHOOK_SECRET, CRON_SECRET. Email opsional: RESEND_API_KEY, EMAIL_FROM. `.env.example` berisi nama variabel, bukan credential siap pakai.
 
-Tidak ada migration yang otomatis mengirim pesan Telegram; aktivasi worker/tes endpoint dapat mengirim antrean nyata. Jadwal 09:00 dan 17:30 WIB memakai worker setiap menit dengan deduplikasi slot harian. Pengiriman tidak bisa dijamin tepat detik jika layanan tidak tersedia.
+Vault cron tetap berisi `focusdesk_app_url` dan `focusdesk_cron_secret` dengan nilai yang sama dengan URL production dan CRON_SECRET. **OPENAI_API_KEY tidak dimasukkan ke Vault cron.**
 
-## Yang ada di 1.6
-- Master aplikasi dengan PIC utama/cadangan dan application owner sebagai reviewer.
-- Master kategori, priority, routing per aplikasi/kategori, pemetaan aplikasi–grup.
-- Import `.MD`, Draft/Published/Archived, pemecahan heading, pencarian bagian panduan, sumber dan revisi.
-- `/apps`, `/ask KODE pertanyaan`; reply sebagai koreksi; tombol konfirmasi pembuatan task.
-- Pelapor anggota grup tidak harus login web. Tindakan terikat numeric Telegram ID dan chat.
-- Laporan asli dan catatan tidak dapat diedit/dihapus. Reports hanya baca, RLS, pagination dan export CSV halaman.
-- Task memakai workflow PIC/reviewer lama; status tersinkron web dan notifikasi grup.
-- Outbox support, retry terbatas, idempotensi webhook/task, pemeriksaan ulang akses saat mengirim.
+## Cara kerja
+Telegram group `/ask KODE pertanyaan` → validasi grup/aplikasi → pencarian PostgreSQL → maksimal 3 kutipan Published → OpenAI Responses API → validasi ID sumber → simpan jawaban/audit → Telegram.
 
-## Batasan yang perlu diketahui
-Pencarian tanpa LLM menampilkan kutipan, bukan jawaban AI bebas. Knowledge harus Anda isi dan tinjau. Reviewer masih application owner, bukan pilihan user terpisah. Critical support dipetakan ke High di board lama. Target waktu adalah jam kalender, bukan SLA business-hours/auto-escalation. Attachment Telegram, penggabungan laporan terpisah, dan pembuatan knowledge otomatis dari resolusi belum disediakan. Semua anggota grup bisa melihat tombol support, tetapi hanya pelapor yang dapat menjalankannya; tombol execution tetap DM PIC.
+Jawaban mencantumkan sumber/revisi. Pertanyaan asli immutable, koreksi append-only. Reply teks ke bot memberi detail tambahan. Jika bukti tidak cukup, pelapor memilih kategori dan mengonfirmasi eskalasi untuk membuat task ke PIC. OpenAI tidak diberi tools untuk mengubah task/PIC; execution/review tetap tombol dan validasi role.
 
-## Pengembangan dan validasi
+AI mati, key salah, model tidak tersedia, timeout, quota atau batas harian → fallback kutipan panduan. Tanpa sumber → tawarkan tambah detail/laporan tanpa memanggil OpenAI. Jika model tidak dapat menjawab dari sumber → tawarkan detail atau eskalasi.
+
+UI AI menampilkan konfigurasi server, penggunaan hari ini dan 10 aktivitas terbaru milik workspace admin. “Konfigurasi siap” bukan bukti koneksi live; gunakan Periksa koneksi AI dan uji grup.
+
+## Operasi dan batasan
+- Maksimal satu pesan support per invocation saat AI aktif; antrean berikutnya diproses webhook/cron satu-menit. Latensi tergantung antrean dan layanan.
+- AI timeout 18 detik, output maksimal 1.000 token. Tidak ada retry otomatis OpenAI; delivery Telegram memakai jawaban tersimpan. Pengiriman ambigu tidak diulang otomatis.
+- Pertanyaan/kutipan dikirim ke OpenAI dengan `store:false`; bukan jaminan zero-retention seluruh layanan. Publish hanya data yang Anda izinkan untuk diproses. Jangan publish secret/data pribadi yang tidak perlu.
+- Retrieval memakai kata kunci, belum embeddings. Gunakan judul/heading/sinonim jelas. AI tetap bisa salah; lakukan UAT dengan panduan asli.
+- Chat bebas tanpa /ask tidak memicu AI. Knowledge Desk group-only. DM untuk kartu eksekusi PIC dan pairing. Ini bukan koneksi sesi ChatGPT personal.
+- Daily cap per application owner/workspace, bukan total biaya seluruh workspace. Atur budget project OpenAI juga. Hitungan percobaan API, bukan token/biaya aktual.
+- Scheduler tetap 09:00 dan 17:30 WIB.
+
+## Pengembangan dan pengujian
 `npm ci`, `npm test`, `npm run build`.
-Untuk uji PostgreSQL lokal: install `@electric-sql/pglite` sebagai dependency pengembangan sementara, lalu `node scripts/test-v16-sql.mjs` (atau atur `PGLITE_MODULE`). Browser QA menggunakan Playwright/Chromium melalui environment `PLAYWRIGHT_MODULE`, `CHROMIUM_EXECUTABLE`, `CHROMIUM_MODULE`.
+Database: `PGLITE_MODULE=<path @electric-sql/pglite> node scripts/test-v17-sql.mjs`.
+Browser: `PLAYWRIGHT_MODULE=<path playwright> CHROMIUM_MODULE=<path @sparticuz/chromium> node scripts/test-v17-ui.mjs`.
+Desain: `docs/V1_7_DESIGN.md`. Validasi: `docs/TEST_RESULTS_V1_7.md`. Dokumen v1.6/lebih lama menjelaskan fitur existing; README v1.7 berlaku untuk fitur baru.
 
-Hasil validasi ada di `docs/TEST_RESULTS_V1_6.md`. Pengujian lokal menggunakan database simulasi dan API mock; deployment Supabase/Vercel/Telegram milik Anda belum diuji langsung dalam proses pembuatan paket ini.
+Referensi: https://developers.openai.com/api/docs/guides/structured-outputs dan https://developers.openai.com/api/docs/models/gpt-4.1-mini
+
+Paket belum dideploy atau diuji live menggunakan akun Vercel, Supabase, OpenAI dan Telegram Anda. Tidak ada akses pengelolaan deployment Anda pada sesi pembuatan paket.
